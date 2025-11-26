@@ -20,10 +20,10 @@ export const chatController = {
     }
 
     // Ensure session
-    const session = await ChatSession.findOrCreate({
+    const [session] = await ChatSession.findOrCreate({
       where: { id: session_id },
       defaults: { userId, context: null },
-    }).then(([s]) => s);
+    });
 
     // Persist user message
     await ChatMessage.create({ sessionId: session.id, role: 'user', content: message });

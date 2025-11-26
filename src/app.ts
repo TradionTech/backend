@@ -1,4 +1,5 @@
 import express from 'express';
+import type { Request, Response } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -30,10 +31,10 @@ export function createServer() {
 
   // API docs
   app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-  app.get('/api/docs.json', (_req, res) => res.json(swaggerSpec));
+  app.get('/api/docs.json', (_req: Request, res: Response) => res.json(swaggerSpec));
 
   // DB init (sync in dev via script; here just ensure connection)
-  initSequelize().catch((e) => {
+  initSequelize().catch((e: unknown) => {
     // Don't crash process; let readiness probe fail
     console.error('DB init error', e);
   });

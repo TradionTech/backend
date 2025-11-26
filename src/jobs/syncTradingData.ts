@@ -1,7 +1,16 @@
+import type { MetatraderPosition } from 'metaapi.cloud-sdk';
 import { MetaApiAccount } from '../db/models/MetaApiAccount';
 import { AccountEquitySnapshot } from '../db/models/AccountEquitySnapshot';
 import { TradingPosition } from '../db/models/TradingPosition';
 import { getAccountSummary } from '../services/brokers/metaapi';
+
+type PositionWithLegacyId = MetatraderPosition & {
+  positionId?: string;
+  price?: number;
+  priceOpen?: number;
+  sl?: number;
+  tp?: number;
+};
 
 export async function syncTradingData() {
   const accounts = await MetaApiAccount.findAll({ where: { isActive: true } });
@@ -10,7 +19,7 @@ export async function syncTradingData() {
       const metaId = acc.metaapiAccountId as string;
       const summary = await getAccountSummary(metaId);
       const info = summary.accountInfo;
-      const positions = summary.positions || [];
+      const positions = (summary.positions || []) as PositionWithLegacyId[];
 
       // Snapshot equity/balance
       await AccountEquitySnapshot.create({

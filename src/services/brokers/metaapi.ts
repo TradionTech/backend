@@ -17,7 +17,7 @@ async function ensureConnected(accountId: string) {
 
 export async function getAccountSummary(metaapiAccountId: string) {
   const account = await ensureConnected(metaapiAccountId);
-  const connection = account.getRPCMetaApiConnection();
+  const connection = account.getRPCConnection();
   await connection.connect();
   const [accountInfo, positions] = await Promise.all([
     connection.getAccountInformation(),
@@ -28,14 +28,14 @@ export async function getAccountSummary(metaapiAccountId: string) {
 
 export async function getOpenPositions(metaapiAccountId: string) {
   const account = await ensureConnected(metaapiAccountId);
-  const connection = account.getRPCMetaApiConnection();
+  const connection = account.getRPCConnection();
   await connection.connect();
   return connection.getPositions();
 }
 
 export async function getHistory(metaapiAccountId: string, from?: Date, to?: Date) {
   const account = await ensureConnected(metaapiAccountId);
-  const connection = account.getRPCMetaApiConnection();
+  const connection = account.getRPCConnection();
   await connection.connect();
   const start = from ?? new Date(Date.now() - 30 * 24 * 3600 * 1000);
   const end = to ?? new Date();
@@ -45,7 +45,7 @@ export async function getHistory(metaapiAccountId: string, from?: Date, to?: Dat
 export async function getBalance(metaapiAccountId: string) {
   try {
     const account = await ensureConnected(metaapiAccountId);
-    const connection = account.getRPCMetaApiConnection();
+    const connection = account.getRPCConnection();
     await connection.connect();
     const info = await connection.getAccountInformation();
     return { balance: info.balance, equity: info.equity, currency: info.currency };

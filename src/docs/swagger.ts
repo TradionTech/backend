@@ -11,7 +11,8 @@ const swaggerDefinition = {
   servers: [
     {
       url: '/api',
-      description: 'Relative base URL (replace with https://your-host/api in production)',
+      description:
+        'Relative base URL (replace with https://backend-5vek.onrender.com/api in production)',
     },
   ],
   tags: [
@@ -299,15 +300,21 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           402: {
             description: 'Free plan limit reached',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/LimitError' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/LimitError' } },
+            },
           },
           422: {
             description: 'Validation error',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -332,11 +339,15 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           422: {
             description: 'Invalid calculation inputs',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -361,7 +372,9 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -386,11 +399,15 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           402: {
             description: 'Free plan limit reached',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/LimitError' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/LimitError' } },
+            },
           },
         },
       },
@@ -418,7 +435,9 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -438,12 +457,16 @@ const swaggerDefinition = {
           200: {
             description: 'Authorization URL issued',
             content: {
-              'application/json': { schema: { $ref: '#/components/schemas/BillingInitiateResponse' } },
+              'application/json': {
+                schema: { $ref: '#/components/schemas/BillingInitiateResponse' },
+              },
             },
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -466,16 +489,22 @@ const swaggerDefinition = {
           200: {
             description: 'Verification result',
             content: {
-              'application/json': { schema: { $ref: '#/components/schemas/BillingVerifyResponse' } },
+              'application/json': {
+                schema: { $ref: '#/components/schemas/BillingVerifyResponse' },
+              },
             },
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           404: {
             description: 'Reference does not exist',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -528,11 +557,15 @@ const swaggerDefinition = {
           },
           400: {
             description: 'Missing metaapi_account_id',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -554,7 +587,9 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -576,11 +611,15 @@ const swaggerDefinition = {
           204: { description: 'Account removed' },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           404: {
             description: 'Account not found',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -590,9 +629,7 @@ const swaggerDefinition = {
         tags: ['Accounts'],
         summary: 'Get account info and open positions',
         security: [{ bearerAuth: [] }],
-        parameters: [
-          { in: 'path', name: 'id', required: true, schema: { type: 'integer' } },
-        ],
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'integer' } }],
         responses: {
           200: {
             description: 'Summary payload',
@@ -604,11 +641,15 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           404: {
             description: 'Account not found',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -618,9 +659,7 @@ const swaggerDefinition = {
         tags: ['Accounts'],
         summary: 'Get latest balance snapshot',
         security: [{ bearerAuth: [] }],
-        parameters: [
-          { in: 'path', name: 'id', required: true, schema: { type: 'integer' } },
-        ],
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'integer' } }],
         responses: {
           200: {
             description: 'Balance snapshot',
@@ -630,11 +669,15 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           404: {
             description: 'Account not found',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -644,9 +687,7 @@ const swaggerDefinition = {
         tags: ['Accounts'],
         summary: 'List open positions',
         security: [{ bearerAuth: [] }],
-        parameters: [
-          { in: 'path', name: 'id', required: true, schema: { type: 'integer' } },
-        ],
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'integer' } }],
         responses: {
           200: {
             description: 'Open positions',
@@ -658,11 +699,15 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           404: {
             description: 'Account not found',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -698,11 +743,15 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           404: {
             description: 'Account not found',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -735,7 +784,9 @@ const swaggerDefinition = {
           },
           401: {
             description: 'Unauthorized',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -755,11 +806,15 @@ const swaggerDefinition = {
           204: { description: 'User ensured' },
           400: {
             description: 'Missing id',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
           401: {
             description: 'Caller mismatch',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -783,7 +838,9 @@ const swaggerDefinition = {
           204: { description: 'Event accepted' },
           400: {
             description: 'Signature verification failed or malformed payload',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
           },
         },
       },
@@ -795,5 +852,3 @@ export const swaggerSpec = swaggerJsdoc({
   definition: swaggerDefinition,
   apis: [],
 });
-
-

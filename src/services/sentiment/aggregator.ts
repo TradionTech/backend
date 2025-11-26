@@ -1,4 +1,4 @@
-import { marketData } from '../market/marketData.js';
+import { marketData } from '../market/marketData';
 
 export const aggregator = {
   async score(symbol: string) {

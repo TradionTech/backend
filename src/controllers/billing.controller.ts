@@ -1,8 +1,8 @@
 import type { Request, Response } from 'express';
-import { paystack } from '../services/payments/paystack.js';
-import { Payment } from '../db/models/Payment.js';
-import { User } from '../db/models/User.js';
-import { Subscription } from '../db/models/Subscription.js';
+import { paystack } from '../services/payments/paystack';
+import { Payment } from '../db/models/Payment';
+import { User } from '../db/models/User';
+import { Subscription } from '../db/models/Subscription';
 
 export const billingController = {
   initiate: async (req: Request, res: Response) => {
@@ -10,7 +10,11 @@ export const billingController = {
     // Decide amount/plan client-side or pass type in body
     const { amountKobo, email, isSubscription } = req.body; // validate in production
 
-    const init = await paystack.initialize({ amountKobo, email, metadata: { userId, isSubscription } });
+    const init = await paystack.initialize({
+      amountKobo,
+      email,
+      metadata: { userId, isSubscription },
+    });
     // store pending payment
     await Payment.create({
       userId,
@@ -18,7 +22,7 @@ export const billingController = {
       amount: amountKobo,
       status: 'pending',
       currency: 'NGN',
-      meta: { isSubscription }
+      meta: { isSubscription },
     });
     res.json({ authorization_url: init.authorization_url, reference: init.reference });
   },
@@ -83,12 +87,11 @@ export const billingController = {
             provider: 'paystack',
             plan: 'pro',
             status: 'active',
-            authCode
+            authCode,
           });
         }
       }
     }
     res.sendStatus(200);
-  }
+  },
 };
-

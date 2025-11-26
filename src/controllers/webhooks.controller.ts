@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { Webhook } from 'svix';
-import { env } from '../config/env.js';
-import { User } from '../db/models/User.js';
+import { env } from '../config/env';
+import { User } from '../db/models/User';
 
 export async function clerkWebhookHandler(req: Request, res: Response) {
   try {

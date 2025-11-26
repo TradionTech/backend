@@ -1,8 +1,8 @@
 import { getAuth, requireAuth } from '@clerk/express';
 import type { Request, Response, NextFunction } from 'express';
-import { User } from '../db/models/User.js';
-import { logger } from '../config/logger.js';
-import type { AuthRequest } from '../types/express.js';
+import { User } from '../db/models/User';
+import { logger } from '../config/logger';
+import type { AuthRequest } from '../types/express';
 
 /** Require Clerk auth and ensure a User row exists for this Clerk userId. */
 export function authGuard() {

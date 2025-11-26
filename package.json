@@ -2,10 +2,10 @@
   "name": "tradionai-backend",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "engines": {
     "node": ">=18"
   },
+  "main": "src/index.ts",
   "scripts": {
     "dev": "nodemon",
     "start": "node dist/index.js",

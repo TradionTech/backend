@@ -1,5 +1,5 @@
-import { marketData } from '../services/market/marketData.js';
-import { SentimentScore } from '../db/models/SentimentScore.js';
+import { marketData } from '../services/market/marketData';
+import { SentimentScore } from '../db/models/SentimentScore';
 
 export async function pullSentiment() {
   const sentiment = await marketData.getSentiment({ symbol: 'BTC' });

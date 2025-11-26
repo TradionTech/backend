@@ -1,4 +1,4 @@
-import { marketData } from '../services/market/marketData.js';
+import { marketData } from '../services/market/marketData';
 
 export async function pullPrices() {
   // Fetch consolidated prices via external market API

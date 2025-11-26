@@ -3,13 +3,13 @@ import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
 import { clerkMiddleware } from '@clerk/express';
-import { errorHandler } from './middleware/errorHandler.js';
-import { apiLimiter } from './config/rateLimit.js';
-import routes from './routes/index.js';
-import webhooksRoutes from './routes/webhooks.routes.js';
+import { errorHandler } from './middleware/errorHandler';
+import { apiLimiter } from './config/rateLimit';
+import routes from './routes/index';
+import webhooksRoutes from './routes/webhooks.routes';
 import swaggerUi from 'swagger-ui-express';
-import { swaggerSpec } from './docs/swagger.js';
-import { initSequelize } from './db/sequelize.js';
+import { swaggerSpec } from './docs/swagger';
+import { initSequelize } from './db/sequelize';
 
 export function createServer() {
   const app = express();

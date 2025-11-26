@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import Joi from 'joi';
-import { authGuard } from '../middleware/auth.js';
-import { validateBody } from '../middleware/validate.js';
-import { riskController } from '../controllers/risk.controller.js';
+import { authGuard } from '../middleware/auth';
+import { validateBody } from '../middleware/validate';
+import { riskController } from '../controllers/risk.controller';
 
 const router = Router();
 
@@ -12,10 +12,9 @@ const RiskSchema = Joi.object({
   entry: Joi.number().required(),
   stop_loss: Joi.number().required(),
   take_profit: Joi.number().optional(),
-  symbol: Joi.string().required()
+  symbol: Joi.string().required(),
 });
 
 router.post('/calculate', authGuard(), validateBody(RiskSchema), riskController.calculate);
 
 export default router;
-

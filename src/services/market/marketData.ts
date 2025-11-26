@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { env } from '../../config/env.js';
+import { env } from '../../config/env';
 
 const client = axios.create({
   baseURL: env.MARKET_API_BASE_URL,

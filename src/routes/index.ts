@@ -1,12 +1,12 @@
 import { Router } from 'express';
-import chatRoutes from './chat.routes.js';
-import riskRoutes from './risk.routes.js';
-import journalRoutes from './journal.routes.js';
-import sentimentRoutes from './sentiment.routes.js';
-import billingRoutes from './billing.routes.js';
-import adminRoutes from './admin.routes.js';
-import accountRoutes from './account.routes.js';
-import usersRoutes from './users.routes.js';
+import chatRoutes from './chat.routes';
+import riskRoutes from './risk.routes';
+import journalRoutes from './journal.routes';
+import sentimentRoutes from './sentiment.routes';
+import billingRoutes from './billing.routes';
+import adminRoutes from './admin.routes';
+import accountRoutes from './account.routes';
+import usersRoutes from './users.routes';
 
 const router = Router();
 

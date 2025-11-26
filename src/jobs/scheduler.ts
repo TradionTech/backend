@@ -1,9 +1,9 @@
 import cron from 'node-cron';
-import { env } from '../config/env.js';
-import { pullPrices } from './pullPrices.js';
-import { pullSentiment } from './pullSentiment.js';
-import { pullEconomicCalendar } from './pullEconomicCalendar.js';
-import { syncTradingData } from './syncTradingData.js';
+import { env } from '../config/env';
+import { pullPrices } from './pullPrices';
+import { pullSentiment } from './pullSentiment';
+import { pullEconomicCalendar } from './pullEconomicCalendar';
+import { syncTradingData } from './syncTradingData';
 
 if (!env.ENABLE_JOBS) {
   console.log('Jobs disabled');

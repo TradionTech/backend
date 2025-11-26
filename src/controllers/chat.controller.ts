@@ -1,10 +1,10 @@
 import type { Request, Response } from 'express';
-import { ChatSession } from '../db/models/ChatSession.js';
-import { ChatMessage } from '../db/models/ChatMessage.js';
-import { Usage } from '../services/usage/usage.js';
-import { Limits } from '../services/plans/limits.js';
-import { chatLLM } from '../services/ai/chatLLM.js';
-import { marketData } from '../services/market/marketData.js';
+import { ChatSession } from '../db/models/ChatSession';
+import { ChatMessage } from '../db/models/ChatMessage';
+import { Usage } from '../services/usage/usage';
+import { Limits } from '../services/plans/limits';
+import { chatLLM } from '../services/ai/chatLLM';
+import { marketData } from '../services/market/marketData';
 
 export const chatController = {
   postChat: async (req: Request, res: Response) => {

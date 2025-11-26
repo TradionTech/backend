@@ -1,8 +1,8 @@
 import type { Request, Response } from 'express';
-import { JournalEntry } from '../db/models/JournalEntry.js';
-import { journalCoach } from '../services/ai/journalCoach.js';
-import { Usage } from '../services/usage/usage.js';
-import { Limits } from '../services/plans/limits.js';
+import { JournalEntry } from '../db/models/JournalEntry';
+import { journalCoach } from '../services/ai/journalCoach';
+import { Usage } from '../services/usage/usage';
+import { Limits } from '../services/plans/limits';
 
 export const journalController = {
   createEntry: async (req: Request, res: Response) => {
@@ -15,7 +15,7 @@ export const journalController = {
       direction,
       entryPrice: entry_price,
       exitPrice: exit_price ?? null,
-      notes: notes ?? null
+      notes: notes ?? null,
     });
 
     return res.status(201).json(entry);
@@ -28,7 +28,9 @@ export const journalController = {
     const plan = await Usage.getPlan(userId);
     const { analysesToday } = await Usage.getCounters(userId);
     if (plan === 'free' && analysesToday >= Limits.free.maxAnalysesPerDay) {
-      return res.status(402).json({ error: 'Free plan daily analysis limit reached. Upgrade to Pro.' });
+      return res
+        .status(402)
+        .json({ error: 'Free plan daily analysis limit reached. Upgrade to Pro.' });
     }
 
     const { symbol, direction, entry_price, exit_price, notes } = req.body;
@@ -37,7 +39,7 @@ export const journalController = {
       direction,
       entry: entry_price,
       exit: exit_price,
-      notes
+      notes,
     });
 
     const entry = await JournalEntry.create({
@@ -47,11 +49,10 @@ export const journalController = {
       entryPrice: entry_price,
       exitPrice: exit_price ?? null,
       notes: notes ?? null,
-      aiFeedback: analysis
+      aiFeedback: analysis,
     });
 
     await Usage.inc(userId, 'analysesToday');
     return res.json(analysis);
-  }
+  },
 };
-

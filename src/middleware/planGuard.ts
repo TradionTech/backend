@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { User } from '../db/models/User.js';
+import { User } from '../db/models/User';
 
 export function requirePlan(plan: 'pro') {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -20,4 +20,3 @@ export function requirePlan(plan: 'pro') {
     return next();
   };
 }
-

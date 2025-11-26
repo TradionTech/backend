@@ -1,7 +1,7 @@
-import { MetaApiAccount } from '../db/models/MetaApiAccount.js';
-import { AccountEquitySnapshot } from '../db/models/AccountEquitySnapshot.js';
-import { TradingPosition } from '../db/models/TradingPosition.js';
-import { getAccountSummary } from '../services/brokers/metaapi.js';
+import { MetaApiAccount } from '../db/models/MetaApiAccount';
+import { AccountEquitySnapshot } from '../db/models/AccountEquitySnapshot';
+import { TradingPosition } from '../db/models/TradingPosition';
+import { getAccountSummary } from '../services/brokers/metaapi';
 
 export async function syncTradingData() {
   const accounts = await MetaApiAccount.findAll({ where: { isActive: true } });

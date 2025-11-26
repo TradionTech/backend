@@ -4,8 +4,8 @@ import {
   getOpenPositions,
   getHistory,
   getBalance,
-} from '../services/brokers/metaapi.js';
-import { MetaApiAccount } from '../db/models/MetaApiAccount.js';
+} from '../services/brokers/metaapi';
+import { MetaApiAccount } from '../db/models/MetaApiAccount';
 
 async function resolveOwnedMetaapiAccountId(req: Request): Promise<string> {
   const userId = (req as any).auth?.userId as string;

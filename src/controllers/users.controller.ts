@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { User } from '../db/models/User.js';
+import { User } from '../db/models/User';
 
 export async function ensureUser(req: Request, res: Response) {
   const { id, email } = (req.body ?? {}) as { id?: string; email?: string | null };

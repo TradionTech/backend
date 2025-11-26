@@ -1,5 +1,5 @@
-import { UsageStat } from '../../db/models/UsageStat.js';
-import { User } from '../../db/models/User.js';
+import { UsageStat } from '../../db/models/UsageStat';
+import { User } from '../../db/models/User';
 
 export const Usage = {
   async ensureDailyRow(userId: string) {
@@ -30,6 +30,5 @@ export const Usage = {
     if (!row) return;
     (row as any)[field] += 1;
     await row.save();
-  }
+  },
 };
-

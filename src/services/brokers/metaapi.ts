@@ -1,6 +1,6 @@
 import MetaApi from 'metaapi.cloud-sdk/esm-node';
-import { env } from '../../config/env.js';
-import { logger } from '../../config/logger.js';
+import { env } from '../../config/env';
+import { logger } from '../../config/logger';
 
 const metaApi = new MetaApi(env.METAAPI_TOKEN || '');
 

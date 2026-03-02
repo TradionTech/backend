@@ -5,9 +5,11 @@ import { accountController } from '../controllers/account.controller';
 const router = Router();
 
 router.post('/', authGuard(), accountController.link);
+router.post('/provision', authGuard(), accountController.provision);
 router.get('/', authGuard(), accountController.list);
 router.delete('/:id', authGuard(), accountController.unlink);
 
+router.post('/:id/sync-state', authGuard(), accountController.syncState);
 router.get('/:id/summary', authGuard(), accountController.summary);
 router.get('/:id/balance', authGuard(), accountController.balance);
 router.get('/:id/positions', authGuard(), accountController.positions);

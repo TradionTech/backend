@@ -1,35 +1,30 @@
-import { getAuth, requireAuth } from '@clerk/express';
+import { getAuth } from '@clerk/express';
 import type { Request, Response, NextFunction } from 'express';
 import { User } from '../db/models/User';
 import { logger } from '../config/logger';
-import type { AuthRequest } from '../types/express';
 
 /** Require Clerk auth and ensure a User row exists for this Clerk userId. */
 export function authGuard() {
-  const mw = requireAuth();
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // Clerk will throw if not authenticated
-      await (mw as any)(req, res, async () => {
-        const { userId, sessionId } = getAuth(req);
-        if (!userId) {
-          logger.warn('Auth failed: missing userId', { ip: req.ip, path: req.path });
-          return res.status(401).json({ error: 'Unauthorized', message: 'Invalid authentication' });
-        }
-        // Upsert local user with email from Clerk claims if available
-        const claims = (req as any).auth?.claims;
-        const email = claims?.email || null;
-        const [user] = await User.findOrCreate({
-          where: { id: userId },
-          defaults: { plan: 'free', email },
+      // Manually check authentication to avoid Clerk's default redirect behavior
+      const { userId, sessionId } = getAuth(req);
+
+      if (!userId) {
+        logger.warn('Auth failed: missing userId', { ip: req.ip, path: req.path });
+        return res.status(401).json({
+          error: 'Unauthorized',
+          message: 'Authentication required. Please provide a valid token.',
         });
-        // Update email if it changed in Clerk
-        if (email && user.email !== email) {
-          await user.update({ email });
-        }
-        (req as any).auth = { userId, sessionId };
-        next();
+      }
+
+      // Upsert local user (email will be set via webhook if not present)
+      const [user] = await User.findOrCreate({
+        where: { id: userId },
+        defaults: { plan: 'free', email: null },
       });
+
+      next();
     } catch (e: any) {
       logger.error('Auth error', { error: e?.message, ip: req.ip, path: req.path });
       const isExpired = e?.status === 401 || e?.message?.toLowerCase().includes('expired');
@@ -45,12 +40,9 @@ export function authGuard() {
 export function optionalAuth() {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { userId, sessionId } = getAuth(req);
+      const { userId } = getAuth(req);
       if (userId) {
-        const user = await User.findByPk(userId);
-        if (user) {
-          (req as any).auth = { userId, sessionId };
-        }
+        await User.findByPk(userId);
       }
     } catch (e) {
       // Silently ignore auth errors for optional auth

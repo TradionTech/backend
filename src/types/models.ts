@@ -34,11 +34,42 @@ export interface Position {
 
 export interface TradeHistoryEntry {
   id: string;
-  symbol: string;
-  type: string;
-  volume: number;
-  price: number;
-  time: Date | string;
+  accountId: number;
+  symbol: string | null;
+  type: string | null;
+  volume: number | null;
+  price: number | null;
+  commission: number | null;
+  swap: number | null;
+  profit: number | null;
+  time: Date | string | null;
+  timeOpen: Date | string | null;
+  timeClose: Date | string | null;
+  comment: string | null;
+  orderId: string | null;
+  dealId: string | null;
+
+  // MetaApi-specific fields
+  positionId: string | null;
+  metaapiDealId: string | null;
+  metaapiOrderId: string | null;
+  magic: number | null;
+  platform: 'mt4' | 'mt5' | null;
+  entryType: string | null;
+  dealType: string | null;
+  orderState: string | null;
+  brokerTime: string | null;
+  doneTime: Date | string | null;
+  doneBrokerTime: string | null;
+  currentVolume: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  clientId: string | null;
+  brokerComment: string | null;
+  reason: string | null;
+  accountCurrencyExchangeRate: number | null;
+  stopLimitPrice: number | null;
+  trailingStopLoss: object | null;
 }
 
 export interface MarketPrice {

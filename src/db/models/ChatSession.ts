@@ -1,9 +1,17 @@
 import { DataTypes, Model, Sequelize } from 'sequelize';
 
+/**
+ * Session metadata structure stored in the context field:
+ * {
+ *   user_level?: "novice" | "intermediate" | "advanced",
+ *   last_intent?: string,
+ *   market_context?: object // for future market data integration
+ * }
+ */
 export class ChatSession extends Model {
   declare id: string;
   declare userId: string;
-  declare context: object | null; // last 3 messages
+  declare context: object | null; // Structured metadata (see above)
 }
 
 export function initChatSession(sequelize: Sequelize) {

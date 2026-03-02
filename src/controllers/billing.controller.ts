@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { getAuth } from '@clerk/express';
 import { paystack } from '../services/payments/paystack';
 import { Payment } from '../db/models/Payment';
 import { User } from '../db/models/User';
@@ -6,7 +7,10 @@ import { Subscription } from '../db/models/Subscription';
 
 export const billingController = {
   initiate: async (req: Request, res: Response) => {
-    const userId = (req as any).auth.userId as string;
+    const { userId } = getAuth(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
     // Decide amount/plan client-side or pass type in body
     const { amountKobo, email, isSubscription } = req.body; // validate in production
 
@@ -28,7 +32,10 @@ export const billingController = {
   },
 
   verify: async (req: Request, res: Response) => {
-    const userId = (req as any).auth.userId as string;
+    const { userId } = getAuth(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
     const { reference } = req.query as { reference: string };
     const ver = await paystack.verify(reference);
 

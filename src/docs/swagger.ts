@@ -25,6 +25,9 @@ const swaggerDefinition = {
     { name: 'Admin', description: 'Operational health endpoints' },
     { name: 'Users', description: 'User provisioning helpers' },
     { name: 'Webhooks', description: 'Inbound webhook handlers' },
+    { name: 'Auth', description: 'Authentication helpers' },
+    { name: 'Charts', description: 'Chart image upload and analysis' },
+    { name: 'Profiles', description: 'User profile and trading metrics' },
   ],
   components: {
     securitySchemes: {
@@ -54,11 +57,25 @@ const swaggerDefinition = {
       },
       ChatRequest: {
         type: 'object',
-        required: ['session_id', 'message'],
+        required: ['message'],
         properties: {
           session_id: { type: 'string', format: 'uuid' },
-          message: { type: 'string', maxLength: 500 },
+          message: { type: 'string', maxLength: 2000 },
           message_type: { type: 'string', enum: ['text'], default: 'text' },
+          metadata: {
+            type: 'object',
+            properties: {
+              instrument: { type: 'string' },
+              timeframe: { type: 'string' },
+              chartId: { type: 'string', format: 'uuid' },
+            },
+          },
+          images: {
+            type: 'array',
+            items: { type: 'string', description: 'Base64 or data URL (data:image/...;base64,...)' },
+            maxItems: 10,
+            description: 'Optional images for chart analysis',
+          },
         },
       },
       ChatResponse: {
@@ -94,6 +111,79 @@ const swaggerDefinition = {
           monetary_gain: { type: 'number', nullable: true, example: 375 },
           new_balance_sl: { type: 'number', example: 9850 },
           new_balance_tp: { type: 'number', nullable: true, example: 10375 },
+        },
+      },
+      RiskEvaluationRequest: {
+        type: 'object',
+        required: ['userContext', 'accountState', 'tradeIntent', 'marketSnapshot'],
+        properties: {
+          userContext: {
+            type: 'object',
+            required: ['userId', 'riskProfile', 'experienceLevel', 'typicalRiskPerTradePct', 'typicalPositionSizeUsd'],
+            properties: {
+              userId: { type: 'string' },
+              riskProfile: { type: 'string', enum: ['conservative', 'moderate', 'aggressive'] },
+              experienceLevel: { type: 'string', enum: ['novice', 'intermediate', 'advanced'] },
+              typicalRiskPerTradePct: { type: 'number', minimum: 0 },
+              typicalPositionSizeUsd: { type: 'number', minimum: 0 },
+            },
+          },
+          accountState: {
+            type: 'object',
+            required: ['accountId', 'equityUsd', 'availableMarginUsd', 'openRiskUsd', 'openPositions'],
+            properties: {
+              accountId: { type: 'string' },
+              equityUsd: { type: 'number', minimum: 0 },
+              availableMarginUsd: { type: 'number' },
+              openRiskUsd: { type: 'number', minimum: 0 },
+              openPositions: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: { symbol: { type: 'string' }, riskUsd: { type: 'number', minimum: 0 } },
+                },
+              },
+            },
+          },
+          tradeIntent: {
+            type: 'object',
+            required: ['symbol', 'side', 'entryPrice', 'stopPrice', 'quantity', 'timeframe', 'orderType'],
+            properties: {
+              symbol: { type: 'string' },
+              side: { type: 'string', enum: ['long', 'short'] },
+              entryPrice: { type: 'number' },
+              stopPrice: { type: 'number' },
+              targetPrice: { type: 'number', nullable: true },
+              quantity: { type: 'number' },
+              leverage: { type: 'number', nullable: true },
+              timeframe: { type: 'string', enum: ['scalp', 'intraday', 'swing', 'position'] },
+              orderType: { type: 'string', enum: ['market', 'limit'] },
+            },
+          },
+          marketSnapshot: {
+            type: 'object',
+            required: ['symbol', 'currentPrice'],
+            properties: {
+              symbol: { type: 'string' },
+              currentPrice: { type: 'number' },
+              atr: { type: 'number', nullable: true },
+              tickSize: { type: 'number', nullable: true },
+              minNotional: { type: 'number', nullable: true },
+              maxLeverageAllowed: { type: 'number', nullable: true },
+              sessionVolatilityPct: { type: 'number', nullable: true },
+            },
+          },
+        },
+      },
+      JournalCoachingRequest: {
+        type: 'object',
+        required: ['message'],
+        properties: {
+          message: { type: 'string' },
+          coachingIntent: {
+            type: 'string',
+            enum: ['overview', 'recent_performance', 'pattern_detection', 'risk_discipline', 'emotional_control'],
+          },
         },
       },
       JournalEntryInput: {
@@ -190,7 +280,11 @@ const swaggerDefinition = {
           name: { type: 'string', nullable: true },
           platform: { type: 'string', nullable: true, enum: ['mt4', 'mt5'] },
           region: { type: 'string', nullable: true },
-          state: { type: 'string', nullable: true },
+          state: { type: 'string', nullable: true, description: 'MetaAPI deployment state: DEPLOYED, UNDEPLOYED, etc.' },
+          connectionStatus: { type: 'string', nullable: true, description: 'CONNECTED, DISCONNECTED, DISCONNECTED_FROM_BROKER' },
+          login: { type: 'string', nullable: true },
+          server: { type: 'string', nullable: true },
+          accountType: { type: 'string', nullable: true, description: 'e.g. cloud-g2' },
           isActive: { type: 'boolean' },
           connectedAt: { type: 'string', format: 'date-time', nullable: true },
           lastSyncedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -352,6 +446,39 @@ const swaggerDefinition = {
         },
       },
     },
+    '/risk/evaluate': {
+      post: {
+        tags: ['Risk'],
+        summary: 'Evaluate trade risk (orchestration)',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/RiskEvaluationRequest' } },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Risk evaluation result',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/RiskResult' } },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          422: {
+            description: 'Validation error',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
     '/journal/entries': {
       post: {
         tags: ['Journal'],
@@ -412,6 +539,63 @@ const swaggerDefinition = {
         },
       },
     },
+    '/journal/analysis/{userId}': {
+      get: {
+        tags: ['Journal'],
+        summary: 'Get journal analysis for a user',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { in: 'path', name: 'userId', required: true, schema: { type: 'string' }, description: 'Clerk user ID' },
+        ],
+        responses: {
+          200: {
+            description: 'Journal analysis data',
+            content: {
+              'application/json': { schema: { type: 'object', description: 'Analysis payload' } },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/journal/coaching': {
+      post: {
+        tags: ['Journal'],
+        summary: 'Request AI coaching based on journal/trades',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/JournalCoachingRequest' } },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Coaching response',
+            content: {
+              'application/json': { schema: { type: 'object', description: 'AI coaching message and insights' } },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          402: {
+            description: 'Free plan limit reached',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/LimitError' } },
+            },
+          },
+        },
+      },
+    },
     '/sentiment': {
       get: {
         tags: ['Sentiment'],
@@ -429,6 +613,30 @@ const swaggerDefinition = {
         responses: {
           200: {
             description: 'Sentiment snapshot',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/SentimentSnapshot' } },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/sentiment/snapshot/{symbol}': {
+      get: {
+        tags: ['Sentiment'],
+        summary: 'Get sentiment snapshot for a specific symbol',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { in: 'path', name: 'symbol', required: true, schema: { type: 'string', example: 'BTC' } },
+        ],
+        responses: {
+          200: {
+            description: 'Sentiment snapshot for symbol',
             content: {
               'application/json': { schema: { $ref: '#/components/schemas/SentimentSnapshot' } },
             },
@@ -526,10 +734,10 @@ const swaggerDefinition = {
         },
       },
     },
-    '/accounts': {
+    '/accounts/provision': {
       post: {
         tags: ['Accounts'],
-        summary: 'Link a MetaAPI account to the current user',
+        summary: 'Provision a new MetaAPI account and link it to the current user',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -537,12 +745,90 @@ const swaggerDefinition = {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['metaapi_account_id'],
+                required: ['login', 'password', 'name', 'server', 'platform', 'magic'],
                 properties: {
-                  metaapi_account_id: { type: 'string' },
+                  login: { type: 'string', description: 'Trading account number (digits only)' },
+                  password: { type: 'string', description: 'MT account password (not stored)' },
+                  name: { type: 'string', description: 'Human-readable account name' },
+                  server: { type: 'string', description: 'Trading server name' },
+                  platform: { type: 'string', enum: ['mt4', 'mt5'] },
+                  magic: { type: 'number', description: 'Magic value (0 if manual trades)' },
+                  region: { type: 'string', nullable: true },
+                  type: { type: 'string', enum: ['cloud-g1', 'cloud-g2'], nullable: true },
+                  provisioning_profile_id: { type: 'string', nullable: true },
+                  transaction_id: { type: 'string', nullable: true, description: 'For retry after 202' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Account provisioned and linked',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/MetaApiAccount' } },
+            },
+          },
+          202: {
+            description: 'Creation in progress; retry with same body + transaction_id',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    message: { type: 'string' },
+                    transaction_id: { type: 'string' },
+                    retry_after_seconds: { type: 'number' },
+                  },
+                },
+              },
+            },
+          },
+          400: {
+            description: 'Validation error (missing/invalid fields)',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/accounts': {
+      post: {
+        tags: ['Accounts'],
+        summary: 'Link an existing MetaAPI account to the current user',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  metaapi_account_id: { type: 'string', description: 'Required, or provide account._id' },
                   name: { type: 'string', nullable: true },
                   platform: { type: 'string', enum: ['mt4', 'mt5'], nullable: true },
                   region: { type: 'string', nullable: true },
+                  account: {
+                    type: 'object',
+                    description: 'Optional JSON from MetaAPI dashboard (state, connectionStatus, region, name, login, server, type)',
+                    properties: {
+                      _id: { type: 'string' },
+                      state: { type: 'string' },
+                      connectionStatus: { type: 'string' },
+                      region: { type: 'string' },
+                      name: { type: 'string' },
+                      login: { type: 'string' },
+                      server: { type: 'string' },
+                      type: { type: 'string' },
+                    },
+                  },
                 },
               },
             },
@@ -594,21 +880,55 @@ const swaggerDefinition = {
         },
       },
     },
+    '/accounts/{id}/sync-state': {
+      post: {
+        tags: ['Accounts'],
+        summary: 'Sync account state from MetaAPI to DB (state, connectionStatus, region, etc.)',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'integer' } }],
+        responses: {
+          200: {
+            description: 'Updated account',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/MetaApiAccount' } },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          404: {
+            description: 'Account not found in MetaAPI or DB',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
     '/accounts/{id}': {
       delete: {
         tags: ['Accounts'],
-        summary: 'Unlink a MetaAPI account',
+        summary: 'Unlink a MetaAPI account by MetaAPI account id',
         security: [{ bearerAuth: [] }],
         parameters: [
           {
             in: 'path',
             name: 'id',
             required: true,
-            schema: { type: 'integer' },
+            schema: { type: 'string', description: 'MetaAPI account id (metaapiAccountId), not internal DB id' },
           },
         ],
         responses: {
           204: { description: 'Account removed' },
+          400: {
+            description: 'MetaAPI account id required',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
           401: {
             description: 'Unauthorized',
             content: {
@@ -780,6 +1100,154 @@ const swaggerDefinition = {
             description: 'Metrics payload',
             content: {
               'application/json': { schema: { $ref: '#/components/schemas/MetricsResponse' } },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/auth/info': {
+      get: {
+        tags: ['Auth'],
+        summary: 'Get current authenticated user info',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Current user info (e.g. userId, email from token)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    userId: { type: 'string' },
+                    email: { type: 'string', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/charts/upload': {
+      post: {
+        tags: ['Charts'],
+        summary: 'Upload a chart image for analysis',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['file'],
+                properties: {
+                  file: { type: 'string', format: 'binary', description: 'Chart image file' },
+                  symbol_hint: { type: 'string', nullable: true },
+                  timeframe_hint: { type: 'string', nullable: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Chart uploaded; returns storage key and metadata',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', format: 'uuid' },
+                    storage_key: { type: 'string' },
+                    original_filename: { type: 'string' },
+                    symbol_hint: { type: 'string', nullable: true },
+                    timeframe_hint: { type: 'string', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/profiles/{userId}': {
+      get: {
+        tags: ['Profiles'],
+        summary: 'Get user profile and trading metrics',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { in: 'path', name: 'userId', required: true, schema: { type: 'string' }, description: 'Clerk user ID' },
+        ],
+        responses: {
+          200: {
+            description: 'Profile and metrics (typical risk %, position size, avg RR, etc.)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    userId: { type: 'string' },
+                    typicalRiskPerTradePct: { type: 'number' },
+                    typicalPositionSizeUsd: { type: 'number' },
+                    avgRrRatio: { type: 'number', nullable: true },
+                    maxDrawdownPct: { type: 'number', nullable: true },
+                    lastComputedAt: { type: 'string', format: 'date-time' },
+                  },
+                },
+              },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          404: {
+            description: 'Profile not found',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/profiles/recompute/{userId}': {
+      post: {
+        tags: ['Profiles'],
+        summary: 'Recompute profile metrics for a user',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { in: 'path', name: 'userId', required: true, schema: { type: 'string' }, description: 'Clerk user ID' },
+        ],
+        responses: {
+          200: {
+            description: 'Metrics recomputed',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  description: 'Updated profile metrics',
+                },
+              },
             },
           },
           401: {

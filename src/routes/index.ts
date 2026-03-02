@@ -7,6 +7,9 @@ import billingRoutes from './billing.routes';
 import adminRoutes from './admin.routes';
 import accountRoutes from './account.routes';
 import usersRoutes from './users.routes';
+import profileRoutes from './profile.routes.js';
+import chartRoutes from './chart.routes.js';
+import authRoutes from './auth.routes';
 
 const router = Router();
 
@@ -18,5 +21,8 @@ router.use('/billing', billingRoutes);
 router.use('/admin', adminRoutes);
 router.use('/accounts', accountRoutes);
 router.use('/users', usersRoutes);
+router.use('/profiles', profileRoutes);
+router.use('/charts', chartRoutes);
+router.use('/auth', authRoutes);
 
 export default router;

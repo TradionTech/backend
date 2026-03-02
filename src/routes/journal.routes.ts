@@ -23,8 +23,25 @@ const AnalyzeSchema = Joi.object({
   notes: Joi.string().allow('', null),
 });
 
+const CoachingSchema = Joi.object({
+  message: Joi.string().required().min(1),
+  coachingIntent: Joi.string()
+    .valid(
+      'overview',
+      'recent_performance',
+      'pattern_detection',
+      'risk_discipline',
+      'emotional_control'
+    )
+    .optional(),
+});
+
 router.post('/entries', authGuard(), validateBody(EntrySchema), journalController.createEntry);
 router.post('/analyze', authGuard(), validateBody(AnalyzeSchema), journalController.analyze); // gated by usage inside
+
+// Journal analysis endpoints
+router.get('/analysis/:userId', authGuard(), journalController.getAnalysis);
+router.post('/coaching', authGuard(), validateBody(CoachingSchema), journalController.coaching); // gated by usage inside
 
 // Example: if you want Pro-only analysis, add requirePlan('pro')
 // router.post('/analyze', authGuard(), requirePlan('pro'), validateBody(AnalyzeSchema), journalController.analyze);

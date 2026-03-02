@@ -5,6 +5,7 @@ A production-ready TypeScript + Express + Sequelize backend scaffold that implem
 ## Quickstart
 
 1. Copy environment variables:
+
    ```bash
    cp env.sample .env
    ```
@@ -16,11 +17,13 @@ A production-ready TypeScript + Express + Sequelize backend scaffold that implem
    - Market data API keys
 
 3. Install dependencies:
+
    ```bash
    npm install
    ```
 
 4. Sync database:
+
    ```bash
    npm run db:sync
    ```
@@ -57,27 +60,38 @@ A production-ready TypeScript + Express + Sequelize backend scaffold that implem
 ## Features
 
 ### Authentication
+
 - Clerk integration for user management
 - Automatic user creation on first login
 - JWT-based authentication
 
 ### AI Services
-- Chat LLM integration (stubbed - ready for Groq/OpenAI)
+
+- **Chat LLM Integration**: Full Groq Compound model integration with:
+  - Intent detection (education, analysis, clarification, validation)
+  - User level assessment (novice, intermediate, advanced)
+  - Structured responses (Facts, Interpretation, Risk & Uncertainty)
+  - Conversation continuity with message history
+  - Safety guardrails to prevent unsafe advice
+  - Adaptive tone based on user experience level
 - Journal analysis with AI feedback
-- Market context integration
+- Market context integration (placeholder for future enhancement)
 
 ### Market Data
+
 - Binance API for crypto data and long/short ratios
 - CoinGecko for price data
 - Finnhub for economic calendar
 - CryptoPanic for news sentiment
 
 ### Payments
+
 - Paystack integration for Nigerian payments
 - Support for both one-time and subscription payments
 - Webhook handling for payment verification
 
 ### Background Jobs
+
 - Price data fetching
 - Sentiment analysis
 - Economic calendar updates
@@ -87,11 +101,15 @@ A production-ready TypeScript + Express + Sequelize backend scaffold that implem
 
 - **User**: Clerk user integration with plan management
 - **ChatSession/ChatMessage**: AI chat history
-- **RiskCalculation**: Risk management calculations
+- **RiskCalculation**: Risk management calculations (includes chat integration fields: `chat_session_id`, `message_id`, `correlation_id`)
 - **JournalEntry**: Trading journal with AI feedback
 - **SentimentScore**: Market sentiment tracking
 - **Payment/Subscription**: Billing management
 - **UsageStat**: Daily usage tracking
+- **MetaApiAccount/TradingPosition/TradeHistory/AccountEquitySnapshot**: Broker integration models
+- **UserProfileMetrics**: Computed trading profile metrics
+
+See [Database Schema Documentation](docs/database-schema.md) for complete schema details, relationships, and field descriptions.
 
 ## Development
 
@@ -126,11 +144,15 @@ See `env.sample` for all required environment variables:
 - **Clerk**: Authentication keys and audience
 - **Paystack**: Payment processing keys
 - **APIs**: Binance, CoinGecko, Finnhub, CryptoPanic keys
+- **Alpha Vantage**: `ALPHAVANTAGE_API_KEY` (for news sentiment), `ALPHAVANTAGE_BASE_URL` (optional)
+- **Crypto Fear & Greed**: `CRYPTO_FG_API_BASE_URL` (optional, defaults to Alternative.me), `CRYPTO_FG_API_KEY` (optional)
+- **Finnhub (sentiment)**: `FINNHUB_API_KEY`, `FINNHUB_BASE_URL` (optional). Set `SENTIMENT_ENABLE_FINNHUB_EQUITY=true` and/or `SENTIMENT_ENABLE_FINNHUB_GENERAL=true` to enable equity news sentiment and FX/crypto general news.
 - **Feature Flags**: Enable/disable background jobs
 
 ## Deployment
 
 Ready for deployment on:
+
 - **Render**: Single service deployment
 - **Vercel**: Serverless functions
 - **Railway**: Container deployment
@@ -139,9 +161,22 @@ All environment variables should be configured in your deployment platform.
 
 ## Notes
 
-- LLM providers are stubbed - integrate Groq/OpenAI in `src/services/ai/`
+- Groq Compound model is fully integrated - set `GROQ_API_KEY` in environment
 - Respect API provider rate limits
 - Adjust job schedules in `src/jobs/scheduler.ts` based on your needs
 - Implement proper webhook signature verification for production
 - Add admin role checks for admin endpoints in production
 
+## Chat System Architecture
+
+The chat system uses a layered architecture:
+
+1. **API Layer** (`chat.controller.ts`): Handles HTTP requests, usage limits, validation
+2. **Orchestrator** (`chatOrchestrator.ts`): Coordinates all components
+3. **Intent Detection** (`intentDetector.ts`): Classifies user intent and experience level
+4. **Groq Client** (`groqCompoundClient.ts`): Wraps Groq's OpenAI-compatible API
+5. **Prompt Builder** (`promptBuilder.ts`): Constructs system prompts with safety rules
+6. **Safety Guard** (`safetyGuard.ts`): Post-processes responses for safety
+7. **Conversation Store** (`conversationStore.ts`): Manages message history and sessions
+
+All responses are structured into three sections: Facts, Interpretation, and Risk & Uncertainty. The system adapts its tone based on detected user level and intent.

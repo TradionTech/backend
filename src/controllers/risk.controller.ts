@@ -1,5 +1,8 @@
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
+import { getAuth } from '@clerk/express';
 import { RiskCalculation } from '../db/models/RiskCalculation';
+import { evaluateTradeRisk } from '../services/risk/riskEngine';
+import type { RiskEvaluationRequest } from '../services/risk/riskTypes';
 
 function calcLotSize(balance: number, riskPercent: number, entry: number, sl: number) {
   const riskAmount = balance * (riskPercent / 100);
@@ -10,7 +13,10 @@ function calcLotSize(balance: number, riskPercent: number, entry: number, sl: nu
 
 export const riskController = {
   calculate: async (req: Request, res: Response) => {
-    const userId = (req as any).auth.userId as string;
+    const { userId } = getAuth(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
     const { account_balance, risk_percent, entry, stop_loss, take_profit, symbol } = req.body;
 
     if (
@@ -48,5 +54,32 @@ export const riskController = {
     });
 
     return res.json(result);
+  },
+
+  evaluateTradeRiskHandler: async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    try {
+      const { userId } = getAuth(req);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      const input = req.body as RiskEvaluationRequest;
+
+      const result = evaluateTradeRisk(input);
+
+      // Optionally persist to RiskCalculation
+      await RiskCalculation.create({
+        userId,
+        params: input,
+        result,
+      });
+
+      return res.json(result);
+    } catch (err) {
+      next(err);
+    }
   },
 };

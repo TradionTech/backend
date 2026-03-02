@@ -13,6 +13,8 @@ import { initMetaApiAccount } from './models/MetaApiAccount.js';
 import { initTradingPosition } from './models/TradingPosition.js';
 import { initTradeHistory } from './models/TradeHistory.js';
 import { initAccountEquitySnapshot } from './models/AccountEquitySnapshot.js';
+import { initUserProfileMetrics } from './models/UserProfileMetrics.js';
+import { initChartUpload } from './models/ChartUpload.js';
 
 export const sequelize = new Sequelize(env.DATABASE_URL, {
   dialect: 'postgres',
@@ -37,10 +39,19 @@ export async function initSequelize() {
   initTradingPosition(sequelize);
   initTradeHistory(sequelize);
   initAccountEquitySnapshot(sequelize);
+  initUserProfileMetrics(sequelize);
+  initChartUpload(sequelize);
 
   // Associations
-  const { User, MetaApiAccount, TradingPosition, TradeHistory, AccountEquitySnapshot } =
-    sequelize.models as any;
+  const {
+    User,
+    MetaApiAccount,
+    TradingPosition,
+    TradeHistory,
+    AccountEquitySnapshot,
+    UserProfileMetrics,
+    ChartUpload,
+  } = sequelize.models as any;
   const {
     ChatSession,
     ChatMessage,
@@ -75,6 +86,12 @@ export async function initSequelize() {
 
   User.hasOne(UsageStat, { foreignKey: 'userId' });
   UsageStat.belongsTo(User, { foreignKey: 'userId' });
+
+  User.hasOne(UserProfileMetrics, { foreignKey: 'userId' });
+  UserProfileMetrics.belongsTo(User, { foreignKey: 'userId' });
+
+  User.hasMany(ChartUpload, { foreignKey: 'userId' });
+  ChartUpload.belongsTo(User, { foreignKey: 'userId' });
 
   // MetaAPI Accounts and trading data associations
   User.hasMany(MetaApiAccount, { foreignKey: 'userId' });

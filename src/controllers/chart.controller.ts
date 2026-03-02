@@ -1,9 +1,11 @@
 import type { Request, Response } from 'express';
 import { getAuth } from '@clerk/express';
-import multer from 'multer';
+import multer, { type FileFilterCallback } from 'multer';
 import { ChartUpload } from '../db/models/ChartUpload';
 import { getStorageService } from '../services/storage';
 import { logger } from '../config/logger';
+
+type RequestWithFile = Request & { file?: Express.Multer.File };
 
 // Configure multer for memory storage
 const upload = multer({
@@ -11,7 +13,7 @@ const upload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB max
   },
-  fileFilter: (_req, file, cb) => {
+  fileFilter: (_req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
     // Accept only image files
     const allowedMimes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
     if (allowedMimes.includes(file.mimetype)) {
@@ -29,7 +31,7 @@ export const chartController = {
    */
   uploadChart: [
     upload.single('file'),
-    async (req: Request, res: Response) => {
+    async (req: RequestWithFile, res: Response) => {
       try {
         const { userId } = getAuth(req);
         if (!userId) {

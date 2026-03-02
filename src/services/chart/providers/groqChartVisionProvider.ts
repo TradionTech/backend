@@ -8,7 +8,7 @@ import axios, { AxiosError } from 'axios';
 import { env } from '../../../config/env';
 import { logger } from '../../../config/logger';
 import type { ChartVisionProvider, ChartVisionRequest } from '../chartVisionProvider';
-import type { ChartVisionFeatures } from '../chartTypes';
+import type { ChartVisionFeatures, ChartMetadata } from '../chartTypes';
 
 const MODEL = 'meta-llama/llama-4-maverick-17b-128e-instruct';
 const BASE_URL = 'https://api.groq.com/openai/v1';

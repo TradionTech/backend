@@ -1,6 +1,6 @@
-# TradionAI Backend (Express + TypeScript + Sequelize)
+# TradionAI Backend (Express + TypeScript + Sequelize + Groq)
 
-A production-ready TypeScript + Express + Sequelize backend scaffold that implements PRD features, Clerk auth, Paystack payments, usage limits (Free vs Pro), and market/sentiment API services (Binance, CoinGecko, Finnhub, CryptoPanic).
+A production-ready TypeScript + Express + Sequelize + Groq backend scaffold that implements PRD features, Clerk auth, Paystack payments, usage limits (Free vs Pro), and market/sentiment API services (Binance, CoinGecko, Finnhub, CryptoPanic).
 
 ## Quickstart
 

@@ -91,6 +91,49 @@ export async function getAccountFromProvisioningApi(
 }
 
 /**
+ * List all trading accounts from MetaAPI provisioning API (GET /users/current/accounts).
+ * See https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai/swagger/#!/default/get_users_current_accounts
+ */
+export async function listAccountsFromProvisioningApi(): Promise<MetaApiProvisioningAccount[]> {
+  try {
+    const client = createProvisioningClient();
+    const { data } = await client.get<MetaApiProvisioningAccount[] | { items?: MetaApiProvisioningAccount[] }>(
+      '/users/current/accounts'
+    );
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object' && Array.isArray((data as { items?: MetaApiProvisioningAccount[] }).items)) {
+      return (data as { items: MetaApiProvisioningAccount[] }).items;
+    }
+    return [];
+  } catch (err: any) {
+    logger.warn('MetaAPI provisioning listAccounts failed', {
+      err: err?.message,
+      status: err?.response?.status,
+    });
+    throw err;
+  }
+}
+
+/**
+ * Find an existing MetaAPI account by login and server (case-sensitive match after trim).
+ * Returns the account from MetaAPI if found, null otherwise.
+ */
+export async function findMetaApiAccountByLoginAndServer(
+  login: string,
+  server: string
+): Promise<MetaApiProvisioningAccount | null> {
+  const normalizedLogin = login.trim();
+  const normalizedServer = server.trim();
+  const accounts = await listAccountsFromProvisioningApi();
+  const found = accounts.find(
+    (a) =>
+      (a.login ?? '').trim() === normalizedLogin &&
+      (a.server ?? '').trim() === normalizedServer
+  );
+  return found ?? null;
+}
+
+/**
  * Deploy a MetaAPI account (starts API server and trading terminal).
  * No-op if account is already deployed. See https://metaapi.cloud/docs/provisioning/api/account/deployAccount/
  */

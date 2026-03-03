@@ -738,6 +738,11 @@ const swaggerDefinition = {
       post: {
         tags: ['Accounts'],
         summary: 'Provision a new MetaAPI account and link it to the current user',
+        description: [
+          'Checks (1) DB for existing login+server: if same user → 200 + sync; if other user → 409.',
+          'Then (2) MetaAPI list for existing account by login+server: if found → link to current user, 200 + sync.',
+          'Otherwise (3) creates account via MetaAPI → 201 or 202 (retry with transaction_id).',
+        ].join(' '),
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -763,8 +768,14 @@ const swaggerDefinition = {
           },
         },
         responses: {
+          200: {
+            description: 'Account already linked to you (DB or MetaAPI); state synced. No new provision charge.',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/MetaApiAccount' } },
+            },
+          },
           201: {
-            description: 'Account provisioned and linked',
+            description: 'Account provisioned and linked (new creation)',
             content: {
               'application/json': { schema: { $ref: '#/components/schemas/MetaApiAccount' } },
             },
@@ -794,6 +805,20 @@ const swaggerDefinition = {
             description: 'Unauthorized',
             content: {
               'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          409: {
+            description: 'Account with this login+server already linked to another user',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    error: { type: 'string', example: 'Account already linked to another user' },
+                    code: { type: 'string', example: 'ACCOUNT_LINKED_TO_OTHER_USER' },
+                  },
+                },
+              },
             },
           },
         },

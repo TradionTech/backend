@@ -7,6 +7,7 @@ import {
   getBalance,
   syncAccountStateToDb,
   createAccountViaProvisioningApi,
+  findMetaApiAccountByLoginAndServer,
   type CreateMetaApiAccountBody,
 } from '../services/brokers/metaapi';
 import { MetaApiAccount } from '../db/models/MetaApiAccount';
@@ -28,8 +29,9 @@ async function resolveOwnedMetaapiAccountId(req: Request): Promise<string> {
 
 export const accountController = {
   // Provision a new MetaAPI account and link it to the current user.
-  // Body: login, password, name, server, platform (mt4|mt5), magic; optional region, type, provisioningProfileId, transaction_id (for retry after 202).
-  // On 201 returns the linked account; on 202 returns transaction_id and retry_after so client can retry with same body + transaction_id.
+  // 1) If DB already has this login+server: same user → 200 + sync; other user → 409.
+  // 2) If not in DB but MetaAPI has it → link to current user, 200 + sync.
+  // 3) Else create via MetaAPI (201 or 202).
   provision: async (req: Request, res: Response) => {
     const { userId } = getAuth(req);
     if (!userId) {
@@ -72,6 +74,64 @@ export const accountController = {
         provisioningProfileId: String(provisioning_profile_id),
       }),
     };
+
+    const normalizedLogin = provisionBody.login;
+    const normalizedServer = provisionBody.server;
+
+    // 1) DB check: any existing record with this login+server (any user)
+    const existingInDb = await MetaApiAccount.findOne({
+      where: { login: normalizedLogin, server: normalizedServer },
+    });
+    if (existingInDb) {
+      if (existingInDb.userId === userId) {
+        try {
+          await syncAccountStateToDb(existingInDb.metaapiAccountId as string);
+          await existingInDb.reload();
+        } catch {
+          // ignore sync errors
+        }
+        return res.status(200).json(existingInDb);
+      }
+      return res.status(409).json({
+        error: 'Account already linked to another user',
+        code: 'ACCOUNT_LINKED_TO_OTHER_USER',
+      });
+    }
+
+    // 2) Not in DB: check if already provisioned on MetaAPI (by login+server)
+    let existingOnMetaApi: Awaited<ReturnType<typeof findMetaApiAccountByLoginAndServer>> = null;
+    try {
+      existingOnMetaApi = await findMetaApiAccountByLoginAndServer(normalizedLogin, normalizedServer);
+    } catch {
+      // On MetaAPI list failure, proceed to provision (create might still succeed)
+    }
+    if (existingOnMetaApi) {
+      const metaapiAccountId = existingOnMetaApi._id;
+      const defaults = {
+        name: provisionBody.name,
+        platform: provisionBody.platform,
+        region: provisionBody.region ?? existingOnMetaApi.region ?? null,
+        state: existingOnMetaApi.state ?? null,
+        connectionStatus: existingOnMetaApi.connectionStatus ?? null,
+        login: normalizedLogin,
+        server: normalizedServer,
+        accountType: existingOnMetaApi.type ?? provisionBody.type ?? 'cloud-g2',
+      };
+      const rec = await MetaApiAccount.findOrCreate({
+        where: { userId, metaapiAccountId },
+        defaults: defaults as any,
+      });
+      const row = Array.isArray(rec) ? rec[0] : rec;
+      try {
+        await syncAccountStateToDb(row.metaapiAccountId as string);
+        await row.reload();
+      } catch {
+        // ignore
+      }
+      return res.status(200).json(row);
+    }
+
+    // 3) Not in DB and not on MetaAPI: create via provisioning API
     const result = await createAccountViaProvisioningApi(
       provisionBody,
       transaction_id ? String(transaction_id) : undefined

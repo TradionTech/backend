@@ -292,6 +292,40 @@ const swaggerDefinition = {
           updatedAt: { type: 'string', format: 'date-time' },
         },
       },
+      MetaApiAccountInformation: {
+        type: 'object',
+        description: 'Live account info from MetaAPI terminal (balance, equity, margin, etc.). Null when account is not connected.',
+        nullable: true,
+        properties: {
+          balance: { type: 'number', description: 'Account balance' },
+          equity: { type: 'number', description: 'Liquidation value including open positions' },
+          margin: { type: 'number', nullable: true },
+          freeMargin: { type: 'number', nullable: true },
+          leverage: { type: 'number', nullable: true },
+          marginLevel: { type: 'number', nullable: true },
+          tradeAllowed: { type: 'boolean', nullable: true },
+          currency: { type: 'string', nullable: true },
+          broker: { type: 'string', nullable: true },
+          server: { type: 'string', nullable: true },
+          name: { type: 'string', nullable: true },
+          login: { type: 'string', nullable: true },
+          marginMode: { type: 'string', nullable: true },
+          type: { type: 'string', nullable: true, description: 'demo, contest, or real' },
+        },
+      },
+      MetaApiAccountListItem: {
+        type: 'object',
+        description: 'Linked account with optional live account information (balance, equity, etc.) when terminal is connected.',
+        allOf: [
+          { $ref: '#/components/schemas/MetaApiAccount' },
+          {
+            type: 'object',
+            properties: {
+              accountInformation: { $ref: '#/components/schemas/MetaApiAccountInformation' },
+            },
+          },
+        ],
+      },
       MetaApiAccountSummary: {
         type: 'object',
         properties: {
@@ -883,15 +917,16 @@ const swaggerDefinition = {
       get: {
         tags: ['Accounts'],
         summary: 'List linked MetaAPI accounts',
+        description: 'Returns all linked accounts for the current user. Each item includes accountInformation (balance, equity, margin, etc.) from the MetaAPI terminal when the account is deployed and connected; otherwise accountInformation is null.',
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
-            description: 'Array of accounts',
+            description: 'Array of accounts with optional live account information',
             content: {
               'application/json': {
                 schema: {
                   type: 'array',
-                  items: { $ref: '#/components/schemas/MetaApiAccount' },
+                  items: { $ref: '#/components/schemas/MetaApiAccountListItem' },
                 },
               },
             },

@@ -5,6 +5,7 @@ import {
   getOpenPositions,
   getHistory,
   getBalance,
+  getAccountInformation,
   syncAccountStateToDb,
   createAccountViaProvisioningApi,
   findMetaApiAccountByLoginAndServer,
@@ -204,14 +205,24 @@ export const accountController = {
     }
     res.status(201).json(row);
   },
-  // List linked accounts
+  // List linked accounts with balance/account information from MetaAPI when available
   list: async (req: Request, res: Response) => {
     const { userId } = getAuth(req);
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     const rows = await MetaApiAccount.findAll({ where: { userId }, order: [['id', 'asc']] });
-    res.json(rows);
+    const results = await Promise.allSettled(
+      rows.map((row) => getAccountInformation(row.metaapiAccountId as string))
+    );
+    const list = rows.map((row, i) => {
+      const payload = row.toJSON() as Record<string, unknown>;
+      const settled = results[i];
+      payload.accountInformation =
+        settled.status === 'fulfilled' ? settled.value : null;
+      return payload;
+    });
+    res.json(list);
   },
   // Unlink by MetaAPI account id (metaapiAccountId), not internal DB id.
   unlink: async (req: Request, res: Response) => {

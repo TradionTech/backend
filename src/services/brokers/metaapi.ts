@@ -303,6 +303,51 @@ export async function getBalance(metaapiAccountId: string) {
 }
 
 /**
+ * Account information from MetaAPI terminal (balance, equity, margin, etc.).
+ * See https://metaapi.cloud/docs/client/models/metatraderAccountInformation/
+ * and https://mt-client-api-v1.new-york.agiliumtrade.ai/swagger/#!/default/get_users_current_accounts_accountId_account_information
+ */
+export interface MetaApiAccountInformation {
+  balance?: number;
+  equity?: number;
+  margin?: number;
+  freeMargin?: number;
+  leverage?: number;
+  marginLevel?: number;
+  tradeAllowed?: boolean;
+  currency?: string;
+  broker?: string;
+  server?: string;
+  name?: string;
+  login?: number | string;
+  marginMode?: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Get full account information (balance, equity, margin, etc.) from MetaAPI terminal.
+ * Requires account to be deployed and connected. Returns null on failure (e.g. not connected).
+ */
+export async function getAccountInformation(
+  metaapiAccountId: string
+): Promise<MetaApiAccountInformation | null> {
+  try {
+    const account = await ensureConnected(metaapiAccountId);
+    const connection = account.getRPCConnection();
+    await connection.connect();
+    const info = await connection.getAccountInformation();
+    return info as MetaApiAccountInformation;
+  } catch (err: any) {
+    logger.debug('MetaAPI getAccountInformation failed', {
+      metaapiAccountId,
+      err: err?.message,
+    });
+    return null;
+  }
+}
+
+/**
  * Get account region from database MetaApiAccount record
  * Returns the region string or null if not available
  */

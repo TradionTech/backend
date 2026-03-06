@@ -1149,6 +1149,14 @@ const swaggerDefinition = {
           },
         },
       },
+      head: {
+        tags: ['Admin'],
+        summary: 'Health probe (HEAD)',
+        description: 'Same as GET but no response body. Useful for load balancers and readiness checks.',
+        responses: {
+          200: { description: 'Service is healthy' },
+        },
+      },
     },
     '/admin/metrics': {
       get: {

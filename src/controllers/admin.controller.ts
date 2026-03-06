@@ -1,7 +1,10 @@
 import type { Request, Response } from 'express';
 
 export const adminController = {
-  health: async (_req: Request, res: Response) => {
+  health: async (req: Request, res: Response) => {
+    if (req.method === 'HEAD') {
+      return res.sendStatus(200);
+    }
     res.json({ ok: true });
   },
 

@@ -2,6 +2,7 @@ import { Op } from 'sequelize';
 import { TradeHistory } from '../../db/models/TradeHistory.js';
 import { JournalEntry } from '../../db/models/JournalEntry.js';
 import { MetaApiAccount } from '../../db/models/MetaApiAccount.js';
+import { TradingPosition } from '../../db/models/TradingPosition.js';
 import { AccountEquitySnapshot } from '../../db/models/AccountEquitySnapshot.js';
 import { getUserProfileMetrics } from '../profile/profileService.js';
 import {
@@ -17,6 +18,8 @@ import {
 import type {
   JournalAnalysisRequest,
   JournalContextForLLM,
+  JournalDashboardSummary,
+  JournalDashboardPerformance,
   AnalyzableTrade,
   JournalStatsBucket,
 } from './journalTypes.js';
@@ -167,6 +170,61 @@ function extractCommonThemes(entries: JournalEntry[]): string[] {
  */
 export class JournalService {
   /**
+   * Get reconstructed analyzable trades for a user and date window (for dashboard/aggregations).
+   * Uses all linked MetaApi accounts. Optional from/to; defaults to last 2 years.
+   */
+  async getTradesForWindow(req: {
+    userId: string;
+    from?: Date;
+    to?: Date;
+    maxTrades?: number;
+  }): Promise<AnalyzableTrade[]> {
+    const { userId, from, to, maxTrades = 2000 } = req;
+    const now = new Date();
+    const windowTo = to || now;
+    const windowFrom =
+      from ||
+      new Date(windowTo.getTime() - 730 * 24 * 60 * 60 * 1000); // ~2 years
+
+    const accounts = await MetaApiAccount.findAll({
+      where: { userId },
+      attributes: ['id'],
+    });
+    if (accounts.length === 0) return [];
+    const accountIds = accounts.map((acc) => acc.id);
+
+    const historyRecords = await TradeHistory.findAll({
+      where: {
+        accountId: { [Op.in]: accountIds },
+        [Op.or]: [{ timeClose: { [Op.ne]: null } }, { entryType: 'DEAL_ENTRY_OUT' }],
+        timeClose: { [Op.between]: [windowFrom, windowTo] },
+      },
+      order: [
+        ['timeClose', 'DESC NULLS LAST'],
+        ['time', 'DESC'],
+      ],
+      limit: maxTrades * 2,
+    });
+
+    const reconstructed = reconstructTradesFromHistory(historyRecords);
+    const analyzableTrades: AnalyzableTrade[] = [];
+    let processedCount = 0;
+
+    for (const { entry, exit } of reconstructed) {
+      if (processedCount >= maxTrades) break;
+      const equityAtOpen = await getEquityAtOpen(entry.accountId, entry.timeOpen!);
+      const analyzableTrade = mapTradeHistoryToAnalyzable(entry, exit, userId);
+      if (analyzableTrade) {
+        analyzableTrade.equityAtOpenUsd = equityAtOpen ?? undefined;
+        analyzableTrades.push(analyzableTrade);
+        processedCount++;
+      }
+    }
+
+    return analyzableTrades;
+  }
+
+  /**
    * Build complete journal context for LLM consumption.
    * Orchestrates data gathering, trade mapping, stats computation, and pattern detection.
    */
@@ -301,6 +359,75 @@ export class JournalService {
       missingFields.push('incomplete_equity_data');
     }
 
+    // Dashboard-style summary (scoped to analysis window)
+    const netPnl = analyzableTrades.reduce((sum, t) => sum + t.realizedPnlUsd, 0);
+    const winningTrades = analyzableTrades.filter((t) => t.realizedPnlUsd > 0).length;
+    const losingTrades = analyzableTrades.filter((t) => t.realizedPnlUsd < 0).length;
+    const breakevenTrades = analyzableTrades.filter((t) => t.realizedPnlUsd === 0).length;
+    const day7 = new Date(windowTo.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const day30 = new Date(windowTo.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const startOfMonth = new Date(Date.UTC(windowTo.getUTCFullYear(), windowTo.getUTCMonth(), 1));
+    const pnlLast7Days = analyzableTrades
+      .filter((t) => t.closedAt && t.closedAt >= day7)
+      .reduce((s, t) => s + t.realizedPnlUsd, 0);
+    const pnlLast30Days = analyzableTrades
+      .filter((t) => t.closedAt && t.closedAt >= day30)
+      .reduce((s, t) => s + t.realizedPnlUsd, 0);
+    const pnlCurrentMonth = analyzableTrades
+      .filter((t) => t.closedAt && t.closedAt >= startOfMonth)
+      .reduce((s, t) => s + t.realizedPnlUsd, 0);
+    const byMonth = new Map<string, { pnl: number; wins: number; count: number }>();
+    for (const t of analyzableTrades) {
+      if (!t.closedAt) continue;
+      const key = `${t.closedAt.getUTCFullYear()}-${String(t.closedAt.getUTCMonth() + 1).padStart(2, '0')}`;
+      const cur = byMonth.get(key) ?? { pnl: 0, wins: 0, count: 0 };
+      cur.pnl += t.realizedPnlUsd;
+      cur.count += 1;
+      if (t.realizedPnlUsd > 0) cur.wins += 1;
+      byMonth.set(key, cur);
+    }
+    const months = Array.from(byMonth.keys()).sort();
+    const monthlyPnl = months.map((month) => ({ month, pnl: byMonth.get(month)!.pnl }));
+    const monthlyWinRate = months.map((month) => {
+      const cur = byMonth.get(month)!;
+      return { month, winRate: cur.count > 0 ? (cur.wins / cur.count) * 100 : 0 };
+    });
+    const openPositionsCount =
+      accountIds.length === 0 ? 0 : await TradingPosition.count({ where: { accountId: { [Op.in]: accountIds } } });
+    const dashboardSummary: JournalDashboardSummary = {
+      netPnl,
+      monthlyPnl,
+      monthlyWinRate,
+      recentActivity: { pnlLast7Days, pnlLast30Days, pnlCurrentMonth },
+      winLossStats: { winningTrades, losingTrades, breakevenTrades },
+      positionStatus: {
+        openPositions: openPositionsCount,
+        closedPositions: analyzableTrades.length,
+        partiallyClosedPositions: 0,
+      },
+    };
+
+    // Dashboard-style performance
+    const winners = analyzableTrades.filter((t) => t.realizedPnlUsd > 0);
+    const losers = analyzableTrades.filter((t) => t.realizedPnlUsd < 0);
+    const avgWin = winners.length > 0 ? winners.reduce((s, t) => s + t.realizedPnlUsd, 0) / winners.length : null;
+    const avgLoss = losers.length > 0 ? losers.reduce((s, t) => s + t.realizedPnlUsd, 0) / losers.length : null;
+    const pnls = analyzableTrades.map((t) => t.realizedPnlUsd);
+    const bestTrade = pnls.length > 0 ? Math.max(...pnls) : null;
+    const worstTrade = pnls.length > 0 ? Math.min(...pnls) : null;
+    const dashboardPerformance: JournalDashboardPerformance = {
+      riskMetrics: {
+        maxDrawdown: overallStats.maxDrawdownPct,
+        avgWin,
+        avgLoss: avgLoss !== null ? Math.abs(avgLoss) : null,
+      },
+      performanceSummary: {
+        winRate: overallStats.winRatePct,
+        bestTrade,
+        worstTrade,
+      },
+    };
+
     return {
       userId,
       window: {
@@ -321,6 +448,8 @@ export class JournalService {
         tradesConsidered: analyzableTrades.length,
         missingFields,
       },
+      dashboardSummary,
+      dashboardPerformance,
     };
   }
 
@@ -358,6 +487,18 @@ export class JournalService {
         enoughTrades: false,
         tradesConsidered: 0,
         missingFields: ['no_trades', 'no_accounts'],
+      },
+      dashboardSummary: {
+        netPnl: 0,
+        monthlyPnl: [],
+        monthlyWinRate: [],
+        recentActivity: { pnlLast7Days: 0, pnlLast30Days: 0, pnlCurrentMonth: 0 },
+        winLossStats: { winningTrades: 0, losingTrades: 0, breakevenTrades: 0 },
+        positionStatus: { openPositions: 0, closedPositions: 0, partiallyClosedPositions: 0 },
+      },
+      dashboardPerformance: {
+        riskMetrics: { maxDrawdown: null, avgWin: null, avgLoss: null },
+        performanceSummary: { winRate: null, bestTrade: null, worstTrade: null },
       },
     };
   }

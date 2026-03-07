@@ -43,6 +43,12 @@ router.post('/analyze', authGuard(), validateBody(AnalyzeSchema), journalControl
 router.get('/analysis/:userId', authGuard(), journalController.getAnalysis);
 router.post('/coaching', authGuard(), validateBody(CoachingSchema), journalController.coaching); // gated by usage inside
 
+// Journal dashboard (Summary, Trades calendar/day, Performance tabs)
+router.get('/dashboard/summary', authGuard(), journalController.getDashboardSummary);
+router.get('/dashboard/trades/calendar', authGuard(), journalController.getDashboardCalendar);
+router.get('/dashboard/trades/day', authGuard(), journalController.getDashboardDayTrades);
+router.get('/dashboard/performance', authGuard(), journalController.getDashboardPerformance);
+
 // Example: if you want Pro-only analysis, add requirePlan('pro')
 // router.post('/analyze', authGuard(), requirePlan('pro'), validateBody(AnalyzeSchema), journalController.analyze);
 

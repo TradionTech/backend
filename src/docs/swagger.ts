@@ -224,6 +224,90 @@ const swaggerDefinition = {
           tip: { type: 'string' },
         },
       },
+      JournalDashboardSummary: {
+        type: 'object',
+        description: 'Summary tab: net P&L, win rate, monthly charts, recent activity, win/loss stats, position status',
+        properties: {
+          netPnl: { type: 'number' },
+          totalTrades: { type: 'integer' },
+          winRate: { type: 'number', nullable: true },
+          monthlyPnl: {
+            type: 'array',
+            items: { type: 'object', properties: { month: { type: 'string' }, pnl: { type: 'number' } } },
+          },
+          monthlyWinRate: {
+            type: 'array',
+            items: { type: 'object', properties: { month: { type: 'string' }, winRate: { type: 'number' } } },
+          },
+          recentActivity: {
+            type: 'object',
+            properties: {
+              pnlLast7Days: { type: 'number' },
+              pnlLast30Days: { type: 'number' },
+              pnlCurrentMonth: { type: 'number' },
+            },
+          },
+          winLossStats: {
+            type: 'object',
+            properties: {
+              winningTrades: { type: 'integer' },
+              losingTrades: { type: 'integer' },
+              breakevenTrades: { type: 'integer' },
+            },
+          },
+          positionStatus: {
+            type: 'object',
+            properties: {
+              openPositions: { type: 'integer' },
+              closedPositions: { type: 'integer' },
+              partiallyClosedPositions: { type: 'integer' },
+            },
+          },
+        },
+      },
+      JournalCalendarDay: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', example: '2025-03-15' },
+          tradeCount: { type: 'integer' },
+          pnl: { type: 'number' },
+        },
+      },
+      JournalDayTradeRow: {
+        type: 'object',
+        properties: {
+          date: { type: 'string' },
+          symbol: { type: 'string' },
+          type: { type: 'string', enum: ['Buy', 'Sell'] },
+          entry: { type: 'number' },
+          exit: { type: 'number' },
+          status: { type: 'string', example: 'Closed' },
+          risk: { type: 'number', nullable: true },
+          pnl: { type: 'number' },
+        },
+      },
+      JournalDashboardPerformance: {
+        type: 'object',
+        description: 'Performance tab: risk metrics and performance summary',
+        properties: {
+          riskMetrics: {
+            type: 'object',
+            properties: {
+              maxDrawdown: { type: 'number', nullable: true },
+              avgWin: { type: 'number', nullable: true },
+              avgLoss: { type: 'number', nullable: true },
+            },
+          },
+          performanceSummary: {
+            type: 'object',
+            properties: {
+              winRate: { type: 'number', nullable: true },
+              bestTrade: { type: 'number', nullable: true },
+              worstTrade: { type: 'number', nullable: true },
+            },
+          },
+        },
+      },
       SentimentSnapshot: {
         type: 'object',
         properties: {
@@ -626,6 +710,95 @@ const swaggerDefinition = {
             content: {
               'application/json': { schema: { $ref: '#/components/schemas/LimitError' } },
             },
+          },
+        },
+      },
+    },
+    '/journal/dashboard/summary': {
+      get: {
+        tags: ['Journal'],
+        summary: 'Journal dashboard – Summary tab',
+        description: 'Net P&L, total trades, win rate, monthly P&L and win rate (for charts), recent activity (7d/30d/current month), win/loss stats, position status (open/closed/partially closed). Aggregated across all user linked accounts.',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Summary data',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/JournalDashboardSummary' } } },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+          },
+        },
+      },
+    },
+    '/journal/dashboard/trades/calendar': {
+      get: {
+        tags: ['Journal'],
+        summary: 'Journal dashboard – Trades calendar',
+        description: 'Per-day trade count and P&L for a given month (for calendar view).',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { in: 'query', name: 'year', schema: { type: 'integer', example: 2025 }, description: 'Year (default: current)' },
+          { in: 'query', name: 'month', schema: { type: 'integer', example: 3 }, description: 'Month 1–12 (default: current)' },
+        ],
+        responses: {
+          200: {
+            description: 'Array of days with tradeCount and pnl',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/JournalCalendarDay' } },
+              },
+            },
+          },
+          400: { description: 'Invalid year or month' },
+          401: {
+            description: 'Unauthorized',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+          },
+        },
+      },
+    },
+    '/journal/dashboard/trades/day': {
+      get: {
+        tags: ['Journal'],
+        summary: 'Journal dashboard – Trades for a single day',
+        description: 'Trading history for the given date (table: Date, Symbol, Type, Entry, Exit, Status, Risk, P&L).',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { in: 'query', name: 'date', required: true, schema: { type: 'string', example: '2025-03-15' }, description: 'Date YYYY-MM-DD' },
+        ],
+        responses: {
+          200: {
+            description: 'List of trades for the day',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { $ref: '#/components/schemas/JournalDayTradeRow' } },
+              },
+            },
+          },
+          400: { description: 'Invalid date' },
+          401: {
+            description: 'Unauthorized',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+          },
+        },
+      },
+    },
+    '/journal/dashboard/performance': {
+      get: {
+        tags: ['Journal'],
+        summary: 'Journal dashboard – Performance tab',
+        description: 'Risk metrics (max drawdown, avg win, avg loss) and performance summary (win rate, best trade, worst trade).',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Performance data',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/JournalDashboardPerformance' } } },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
           },
         },
       },

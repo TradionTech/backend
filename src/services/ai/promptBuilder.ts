@@ -898,6 +898,8 @@ Remember: Always respect the data quality flags. If there are insufficient trade
       profileMetrics,
       notesSummary,
       dataQuality,
+      dashboardSummary,
+      dashboardPerformance,
     } = journalContext;
 
     const sections: string[] = [];
@@ -916,6 +918,40 @@ Remember: Always respect the data quality flags. If there are insufficient trade
       `  Median Risk per Trade: ${overallStats.medianRiskPerTradePct?.toFixed(2) || 'N/A'}%`
     );
     sections.push(`  Max Drawdown: ${overallStats.maxDrawdownPct?.toFixed(2) || 'N/A'}%`);
+
+    // Dashboard Summary (net P&L, recent activity, win/loss counts, position status)
+    sections.push(`\nDashboard Summary (same window):`);
+    sections.push(`  Net P&L: $${dashboardSummary.netPnl.toFixed(2)}`);
+    sections.push(
+      `  Recent Activity — Last 7 days: $${dashboardSummary.recentActivity.pnlLast7Days.toFixed(2)}, Last 30 days: $${dashboardSummary.recentActivity.pnlLast30Days.toFixed(2)}, Current month: $${dashboardSummary.recentActivity.pnlCurrentMonth.toFixed(2)}`
+    );
+    sections.push(
+      `  Win/Loss Stats — Winning: ${dashboardSummary.winLossStats.winningTrades}, Losing: ${dashboardSummary.winLossStats.losingTrades}, Breakeven: ${dashboardSummary.winLossStats.breakevenTrades}`
+    );
+    sections.push(
+      `  Position Status — Open: ${dashboardSummary.positionStatus.openPositions}, Closed: ${dashboardSummary.positionStatus.closedPositions}, Partially closed: ${dashboardSummary.positionStatus.partiallyClosedPositions}`
+    );
+    if (dashboardSummary.monthlyPnl.length > 0) {
+      sections.push(`  Monthly P&L (${dashboardSummary.monthlyPnl.length} months):`);
+      dashboardSummary.monthlyPnl.slice(-12).forEach((m) => {
+        sections.push(`    ${m.month}: $${m.pnl.toFixed(2)}`);
+      });
+    }
+    if (dashboardSummary.monthlyWinRate.length > 0) {
+      sections.push(`  Monthly Win Rate (last ${Math.min(12, dashboardSummary.monthlyWinRate.length)} months):`);
+      dashboardSummary.monthlyWinRate.slice(-12).forEach((m) => {
+        sections.push(`    ${m.month}: ${m.winRate.toFixed(1)}%`);
+      });
+    }
+
+    // Dashboard Performance (risk metrics, best/worst trade)
+    sections.push(`\nDashboard Performance:`);
+    sections.push(
+      `  Risk Metrics — Max Drawdown: ${dashboardPerformance.riskMetrics.maxDrawdown?.toFixed(2) ?? 'N/A'}%, Avg Win: $${dashboardPerformance.riskMetrics.avgWin?.toFixed(2) ?? 'N/A'}, Avg Loss: $${dashboardPerformance.riskMetrics.avgLoss?.toFixed(2) ?? 'N/A'}`
+    );
+    sections.push(
+      `  Performance Summary — Win Rate: ${dashboardPerformance.performanceSummary.winRate?.toFixed(1) ?? 'N/A'}%, Best Trade: $${dashboardPerformance.performanceSummary.bestTrade?.toFixed(2) ?? 'N/A'}, Worst Trade: $${dashboardPerformance.performanceSummary.worstTrade?.toFixed(2) ?? 'N/A'}`
+    );
 
     // Profile Metrics
     if (profileMetrics) {

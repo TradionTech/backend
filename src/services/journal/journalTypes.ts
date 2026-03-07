@@ -86,6 +86,46 @@ export interface BehaviourPattern {
  * Complete journal context structure passed to LLM for coaching.
  * Contains all deterministic stats, patterns, and metadata.
  */
+export interface JournalDashboardSummary {
+  /** Total realized P&L over the analysis window */
+  netPnl: number;
+  /** P&L by month (for charts); scoped to window */
+  monthlyPnl: Array<{ month: string; pnl: number }>;
+  /** Win rate by month (for charts); scoped to window */
+  monthlyWinRate: Array<{ month: string; winRate: number }>;
+  /** P&L for last 7 days, last 30 days, and current month (relative to window end) */
+  recentActivity: {
+    pnlLast7Days: number;
+    pnlLast30Days: number;
+    pnlCurrentMonth: number;
+  };
+  /** Counts of winning, losing, and breakeven trades */
+  winLossStats: {
+    winningTrades: number;
+    losingTrades: number;
+    breakevenTrades: number;
+  };
+  /** Open, closed, and partially closed position counts */
+  positionStatus: {
+    openPositions: number;
+    closedPositions: number;
+    partiallyClosedPositions: number;
+  };
+}
+
+export interface JournalDashboardPerformance {
+  riskMetrics: {
+    maxDrawdown: number | null;
+    avgWin: number | null;
+    avgLoss: number | null;
+  };
+  performanceSummary: {
+    winRate: number | null;
+    bestTrade: number | null;
+    worstTrade: number | null;
+  };
+}
+
 export interface JournalContextForLLM {
   userId: string;
   /** Analysis window information */
@@ -119,6 +159,10 @@ export interface JournalContextForLLM {
     tradesConsidered: number;
     missingFields: string[];
   };
+  /** Dashboard-style summary (net P&L, monthly data, recent activity, win/loss counts, position status) */
+  dashboardSummary: JournalDashboardSummary;
+  /** Dashboard-style performance (max drawdown, avg win/loss, best/worst trade) */
+  dashboardPerformance: JournalDashboardPerformance;
 }
 
 /**

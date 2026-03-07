@@ -1,12 +1,14 @@
 import { JournalService } from '../journalService.js';
 import { TradeHistory } from '../../../db/models/TradeHistory.js';
 import { MetaApiAccount } from '../../../db/models/MetaApiAccount.js';
+import { TradingPosition } from '../../../db/models/TradingPosition.js';
 import { JournalEntry } from '../../../db/models/JournalEntry.js';
 import { getUserProfileMetrics } from '../../profile/profileService.js';
 
 // Mock dependencies
 jest.mock('../../../db/models/TradeHistory');
 jest.mock('../../../db/models/MetaApiAccount');
+jest.mock('../../../db/models/TradingPosition');
 jest.mock('../../../db/models/JournalEntry');
 jest.mock('../../profile/profileService');
 
@@ -60,6 +62,7 @@ describe('JournalService', () => {
       (TradeHistory.findAll as jest.Mock).resolves([mockTrade]);
       (getUserProfileMetrics as jest.Mock).resolves(null);
       (JournalEntry.findAll as jest.Mock).resolves([]);
+      (TradingPosition.count as jest.Mock).resolves(0);
 
       const context = await journalService.buildJournalContext({
         userId: 'test-user',

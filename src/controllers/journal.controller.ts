@@ -3,6 +3,7 @@ import { getAuth } from '@clerk/express';
 import { JournalEntry } from '../db/models/JournalEntry';
 import { journalCoach, journalCoachLegacy } from '../services/ai/journalCoach';
 import { journalService } from '../services/journal/journalService';
+import { journalDashboardService } from '../services/journal/journalDashboardService';
 import { Usage } from '../services/usage/usage';
 import { Limits } from '../services/plans/limits';
 import type { CoachingIntent } from '../services/journal/journalTypes';
@@ -142,6 +143,63 @@ export const journalController = {
         error: 'Failed to generate coaching response',
         message: (error as Error).message,
       });
+    }
+  },
+
+  /** GET /journal/dashboard/summary - Summary tab: net P&L, win rate, monthly charts, recent activity, win/loss stats, position status */
+  getDashboardSummary: async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const data = await journalDashboardService.getSummary(userId);
+      return res.json(data);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to load journal summary', message: (e as Error).message });
+    }
+  },
+
+  /** GET /journal/dashboard/trades/calendar?year=YYYY&month=M - Trades tab: calendar data (trade count + P&L per day) */
+  getDashboardCalendar: async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const year = req.query.year ? parseInt(String(req.query.year), 10) : new Date().getFullYear();
+    const month = req.query.month ? parseInt(String(req.query.month), 10) : new Date().getMonth() + 1;
+    if (Number.isNaN(year) || Number.isNaN(month) || month < 1 || month > 12) {
+      return res.status(400).json({ error: 'Invalid year or month' });
+    }
+    try {
+      const data = await journalDashboardService.getCalendarMonth(userId, year, month);
+      return res.json(data);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to load calendar', message: (e as Error).message });
+    }
+  },
+
+  /** GET /journal/dashboard/trades/day?date=YYYY-MM-DD - Trades tab: table of trades for a single day */
+  getDashboardDayTrades: async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const dateStr = String(req.query.date ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return res.status(400).json({ error: 'Invalid date; use YYYY-MM-DD' });
+    }
+    try {
+      const data = await journalDashboardService.getDayTrades(userId, dateStr);
+      return res.json(data);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to load day trades', message: (e as Error).message });
+    }
+  },
+
+  /** GET /journal/dashboard/performance - Performance tab: risk metrics, performance summary */
+  getDashboardPerformance: async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const data = await journalDashboardService.getPerformance(userId);
+      return res.json(data);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to load performance', message: (e as Error).message });
     }
   },
 };

@@ -9,6 +9,9 @@ import {
   syncAccountStateToDb,
   createAccountViaProvisioningApi,
   findMetaApiAccountByLoginAndServer,
+  getAccountFromProvisioningApi,
+  getKnownMtServers,
+  MetaApiProvisioningError,
   type CreateMetaApiAccountBody,
 } from '../services/brokers/metaapi';
 import { MetaApiAccount } from '../db/models/MetaApiAccount';
@@ -26,6 +29,43 @@ async function resolveOwnedMetaapiAccountId(req: Request): Promise<string> {
     throw err;
   }
   return rec.metaapiAccountId as string;
+}
+
+/** Map MetaAPI provisioning error code to user-facing message and optional details. */
+function mapProvisioningError(
+  err: MetaApiProvisioningError
+): { status: number; message: string; code: string; details?: Record<string, unknown> } {
+  const code = err.code ?? 'UNKNOWN';
+  const details: Record<string, unknown> = {};
+  if (typeof err.details === 'object' && err.details !== null) {
+    if ('serversByBrokers' in err.details && err.details.serversByBrokers) {
+      details.suggested_servers = err.details.serversByBrokers;
+    }
+    if ('recommendedResourceSlots' in err.details && err.details.recommendedResourceSlots != null) {
+      details.recommended_resource_slots = err.details.recommendedResourceSlots;
+    }
+  }
+  const messages: Record<string, string> = {
+    E_SRV_NOT_FOUND:
+      'Trading server name not found. Check the server name or use a provisioning profile. See suggested_servers for similar names.',
+    E_AUTH:
+      'Invalid login or password, or account disabled at the broker. Check credentials and server.',
+    E_SERVER_TIMEZONE:
+      'Could not detect broker settings. Try again later or configure a provisioning profile.',
+    E_RESOURCE_SLOTS:
+      'This account needs more resource slots. Re-submit with recommended_resource_slots.',
+    E_NO_SYMBOLS:
+      'No symbols configured for this account. Use a different account or contact your broker.',
+    ERR_OTP_REQUIRED:
+      'One-time password is required. Disable OTP in the mobile MetaTrader app or use a different account.',
+    E_PASSWORD_CHANGE_REQUIRED:
+      'The broker requires a password change. Change the MT account password and try again.',
+    E_TRADING_ACCOUNT_DISABLED:
+      'The broker reports this account as disabled. Use a different account or contact your broker.',
+  };
+  const message = messages[code] ?? err.message ?? 'Account provisioning failed.';
+  const status = err.statusCode === 401 ? 401 : err.statusCode === 403 ? 403 : 400;
+  return { status, message, code, details: Object.keys(details).length ? details : undefined };
 }
 
 export const accountController = {
@@ -133,40 +173,48 @@ export const accountController = {
     }
 
     // 3) Not in DB and not on MetaAPI: create via provisioning API
-    const result = await createAccountViaProvisioningApi(
-      provisionBody,
-      transaction_id ? String(transaction_id) : undefined
-    );
-    if (result.status === 'accepted') {
-      return res.status(202).json({
-        message: result.message ?? 'Account creation in progress',
-        transaction_id: result.transactionId,
-        retry_after_seconds: result.retryAfterSeconds,
-      });
-    }
-    const metaapiAccountId = result.id;
-    const defaults = {
-      name: provisionBody.name,
-      platform: provisionBody.platform,
-      region: provisionBody.region ?? null,
-      state: result.state,
-      connectionStatus: null as string | null,
-      login: provisionBody.login,
-      server: provisionBody.server,
-      accountType: provisionBody.type ?? 'cloud-g2',
-    };
-    const rec = await MetaApiAccount.findOrCreate({
-      where: { userId, metaapiAccountId },
-      defaults: defaults as any,
-    });
-    const row = Array.isArray(rec) ? rec[0] : rec;
     try {
-      await syncAccountStateToDb(row.metaapiAccountId as string);
-      await row.reload();
-    } catch {
-      // ignore
+      const result = await createAccountViaProvisioningApi(
+        provisionBody,
+        transaction_id ? String(transaction_id) : undefined
+      );
+      if (result.status === 'accepted') {
+        return res.status(202).json({
+          message: result.message ?? 'Account creation in progress',
+          transaction_id: result.transactionId,
+          retry_after_seconds: result.retryAfterSeconds,
+        });
+      }
+      const metaapiAccountId = result.id;
+      const defaults = {
+        name: provisionBody.name,
+        platform: provisionBody.platform,
+        region: provisionBody.region ?? null,
+        state: result.state,
+        connectionStatus: null as string | null,
+        login: provisionBody.login,
+        server: provisionBody.server,
+        accountType: provisionBody.type ?? 'cloud-g2',
+      };
+      const rec = await MetaApiAccount.findOrCreate({
+        where: { userId, metaapiAccountId },
+        defaults: defaults as any,
+      });
+      const row = Array.isArray(rec) ? rec[0] : rec;
+      try {
+        await syncAccountStateToDb(row.metaapiAccountId as string);
+        await row.reload();
+      } catch {
+        // ignore
+      }
+      return res.status(201).json(row);
+    } catch (e) {
+      if (e instanceof MetaApiProvisioningError) {
+        const { status, message, code, details } = mapProvisioningError(e);
+        return res.status(status).json({ error: message, code, ...(details && { details }) });
+      }
+      throw e;
     }
-    return res.status(201).json(row);
   },
   // Link a MetaAPI account to the authenticated user.
   // Body: metaapi_account_id (required), optional name, platform, region.
@@ -181,29 +229,63 @@ export const accountController = {
     if (!accountId) {
       return res.status(400).json({ error: 'metaapi_account_id (or account._id) required' });
     }
-    const defaults: Record<string, unknown> = {
-      name: name ?? accountJson?.name ?? null,
-      platform: platform ?? null,
-      region: region ?? accountJson?.region ?? null,
-      state: accountJson?.state ?? null,
-      connectionStatus: accountJson?.connectionStatus ?? null,
-      login: accountJson?.login ?? null,
-      server: accountJson?.server ?? null,
-      accountType: accountJson?.type ?? null,
-    };
-    const rec = await MetaApiAccount.findOrCreate({
-      where: { userId, metaapiAccountId: accountId },
-      defaults: defaults as any,
-    });
-    const row = Array.isArray(rec) ? rec[0] : rec;
-    // Sync state from MetaAPI so DB has up-to-date state/connectionStatus (or keep from account JSON)
     try {
-      await syncAccountStateToDb(row.metaapiAccountId as string);
-      await row.reload();
-    } catch {
-      // Ignore: link still succeeds; state may be updated later by sync job
+      const provisioning = await getAccountFromProvisioningApi(String(accountId));
+      if (!provisioning) {
+        return res.status(404).json({
+          error: 'MetaAPI account not found',
+          code: 'METAAPI_ACCOUNT_NOT_FOUND',
+        });
+      }
+      const defaults: Record<string, unknown> = {
+        name: name ?? accountJson?.name ?? provisioning.name ?? null,
+        platform: platform ?? accountJson?.platform ?? null,
+        region: region ?? accountJson?.region ?? provisioning.region ?? null,
+        state: accountJson?.state ?? provisioning.state ?? null,
+        connectionStatus: accountJson?.connectionStatus ?? provisioning.connectionStatus ?? null,
+        login: accountJson?.login ?? provisioning.login ?? null,
+        server: accountJson?.server ?? provisioning.server ?? null,
+        accountType: accountJson?.type ?? provisioning.type ?? null,
+      };
+      const rec = await MetaApiAccount.findOrCreate({
+        where: { userId, metaapiAccountId: accountId },
+        defaults: defaults as any,
+      });
+      const row = Array.isArray(rec) ? rec[0] : rec;
+      try {
+        await syncAccountStateToDb(row.metaapiAccountId as string);
+        await row.reload();
+      } catch {
+        // Ignore: link still succeeds; state may be updated later by sync job
+      }
+      return res.status(201).json(row);
+    } catch (e) {
+      if (e instanceof MetaApiProvisioningError) {
+        const status = e.statusCode === 401 ? 401 : e.statusCode === 403 ? 403 : 400;
+        return res.status(status).json({
+          error: e.message ?? 'Failed to link MetaAPI account',
+          code: e.code ?? 'METAAPI_ERROR',
+        });
+      }
+      throw e;
     }
-    res.status(201).json(row);
+  },
+  // GET /accounts/servers?version=4|5&query=... — known trading servers for dropdown/search
+  servers: async (req: Request, res: Response) => {
+    const version = req.query.version;
+    const query = typeof req.query.query === 'string' ? req.query.query : undefined;
+    const v = version === '4' ? 4 : version === '5' ? 5 : 5;
+    try {
+      const data = await getKnownMtServers(v, query);
+      return res.json(data);
+    } catch (e) {
+      if (e instanceof MetaApiProvisioningError) {
+        return res
+          .status(e.statusCode >= 400 && e.statusCode < 500 ? e.statusCode : 500)
+          .json({ error: e.message ?? 'Failed to fetch trading servers', code: e.code });
+      }
+      throw e;
+    }
   },
   // List linked accounts with balance/account information from MetaAPI when available
   list: async (req: Request, res: Response) => {

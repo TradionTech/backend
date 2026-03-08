@@ -12,6 +12,30 @@ const metaApi = new MetaApi(env.METAAPI_TOKEN || '');
 const METAAPI_PROVISIONING_BASE = 'https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai';
 
 /**
+ * MetaAPI provisioning API error response (400, 401, 403, 404).
+ * See https://metaapi.cloud/docs/provisioning/api/account/createAccount/#errors
+ */
+export interface MetaApiProvisioningErrorBody {
+  id?: number;
+  error?: string;
+  message?: string;
+  details?: string | { code?: string; recommendedResourceSlots?: number; serversByBrokers?: Record<string, string[]> };
+}
+
+/** Structured error thrown when provisioning/linking fails (from MetaAPI or network). */
+export class MetaApiProvisioningError extends Error {
+  constructor(
+    message: string,
+    public readonly statusCode: number,
+    public readonly code?: string,
+    public readonly details?: MetaApiProvisioningErrorBody['details']
+  ) {
+    super(message);
+    this.name = 'MetaApiProvisioningError';
+  }
+}
+
+/**
  * MetaAPI provisioning API account model (state, connectionStatus, etc.).
  * See https://metaapi.cloud/docs/provisioning/models/tradingAccount/
  */
@@ -80,13 +104,26 @@ export async function getAccountFromProvisioningApi(
     );
     return data;
   } catch (err: any) {
-    if (err?.response?.status === 404) return null;
+    const status = err?.response?.status;
+    const data = err?.response?.data as MetaApiProvisioningErrorBody | undefined;
+    if (status === 404) return null;
+    const message = data?.message ?? err?.message ?? 'Failed to get account';
+    const details = data?.details;
+    const code =
+      typeof details === 'object' && details !== null && 'code' in details
+        ? (details as { code?: string }).code
+        : typeof details === 'string'
+          ? details
+          : undefined;
+    if (status >= 400 && status <= 499) {
+      throw new MetaApiProvisioningError(message, status, code, details);
+    }
     logger.warn('MetaAPI provisioning getAccount failed', {
       accountId,
       err: err?.message,
-      status: err?.response?.status,
+      status,
     });
-    throw err;
+    throw new MetaApiProvisioningError(message, status ?? 500, code, details);
   }
 }
 
@@ -160,15 +197,10 @@ export interface CreateMetaApiAccountBody {
 }
 
 /** Response from create account: 201 with id and state; or 202 with retry info */
-export interface CreateMetaApiAccountResult {
+export interface CreateMetaApiResult {
   id: string;
   state: string;
 }
-
-/**
- * Create a trading account in MetaAPI (provision). Uses transaction-id for idempotency/retry.
- * Returns the created account id and state on 201; on 202 returns retry_after so client can retry with same transaction_id.
- */
 export async function createAccountViaProvisioningApi(
   body: CreateMetaApiAccountBody,
   transactionId?: string
@@ -178,46 +210,106 @@ export async function createAccountViaProvisioningApi(
 > {
   const txId = transactionId ?? crypto.randomBytes(16).toString('hex');
   const client = createProvisioningClient();
-  const response = await client.post<CreateMetaApiAccountResult | { message?: string }>(
-    '/users/current/accounts',
-    {
-      login: body.login,
-      password: body.password,
-      name: body.name,
-      server: body.server,
-      platform: body.platform,
-      magic: body.magic,
-      ...(body.region != null && { region: body.region }),
-      ...(body.type != null && { type: body.type }),
-      ...(body.provisioningProfileId != null && {
-        provisioningProfileId: body.provisioningProfileId,
-      }),
-      ...(body.keywords != null && body.keywords.length > 0 && { keywords: body.keywords }),
-      ...(body.manualTrades != null && { manualTrades: body.manualTrades }),
-      ...(body.resourceSlots != null && { resourceSlots: body.resourceSlots }),
-    },
-    {
-      headers: { 'transaction-id': txId },
-      validateStatus: (s) => s === 201 || s === 202,
+  try {
+    const response = await client.post<CreateMetaApiResult | { message?: string }>(
+      '/users/current/accounts',
+      {
+        login: body.login,
+        password: body.password,
+        name: body.name,
+        server: body.server,
+        platform: body.platform,
+        magic: body.magic,
+        ...(body.region != null && { region: body.region }),
+        ...(body.type != null && { type: body.type }),
+        ...(body.provisioningProfileId != null && {
+          provisioningProfileId: body.provisioningProfileId,
+        }),
+        ...(body.keywords != null && body.keywords.length > 0 && { keywords: body.keywords }),
+        ...(body.manualTrades != null && { manualTrades: body.manualTrades }),
+        ...(body.resourceSlots != null && { resourceSlots: body.resourceSlots }),
+      },
+      {
+        headers: { 'transaction-id': txId },
+        validateStatus: (s) => s === 201 || s === 202,
+      }
+    );
+
+    if (response.status === 201 && response.data && 'id' in response.data) {
+      return {
+        status: 'created',
+        id: response.data.id,
+        state: response.data.state,
+      };
     }
-  );
 
-  if (response.status === 201 && response.data && 'id' in response.data) {
+    const retryAfter = response.headers['retry-after'];
+    const seconds = typeof retryAfter === 'string' ? parseInt(retryAfter, 10) : 60;
     return {
-      status: 'created',
-      id: response.data.id,
-      state: response.data.state,
+      status: 'accepted',
+      transactionId: txId,
+      retryAfterSeconds: Number.isFinite(seconds) ? seconds : 60,
+      message: (response.data as { message?: string })?.message,
     };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const data = err?.response?.data as MetaApiProvisioningErrorBody | undefined;
+    const message = data?.message ?? err?.message ?? 'Provisioning request failed';
+    const details = data?.details;
+    const code =
+      typeof details === 'object' && details !== null && 'code' in details
+        ? (details as { code?: string }).code
+        : typeof details === 'string'
+          ? details
+          : undefined;
+    if (status >= 400 && status <= 499) {
+      throw new MetaApiProvisioningError(message, status, code, details);
+    }
+    logger.warn('MetaAPI createAccount failed', { status, code, message });
+    throw new MetaApiProvisioningError(message, status ?? 500, code, details);
   }
+}
 
-  const retryAfter = response.headers['retry-after'];
-  const seconds = typeof retryAfter === 'string' ? parseInt(retryAfter, 10) : 60;
-  return {
-    status: 'accepted',
-    transactionId: txId,
-    retryAfterSeconds: Number.isFinite(seconds) ? seconds : 60,
-    message: (response.data as { message?: string })?.message,
-  };
+/**
+ * Known MT servers response: broker name -> list of server names.
+ * GET /known-mt-servers/:version/search?query=...
+ */
+export interface KnownMtServersResponse {
+  [brokerName: string]: string[];
+}
+
+/**
+ * Fetch known trading servers from MetaAPI for MT4 or MT5 (for server dropdown/search).
+ * See https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai/swagger/#!/default/get_known_mt_servers_version_search
+ */
+export async function getKnownMtServers(
+  version: 4 | 5,
+  query?: string
+): Promise<KnownMtServersResponse> {
+  const client = createProvisioningClient();
+  const params = query != null && query.trim() !== '' ? { query: query.trim() } : {};
+  try {
+    const response = await client.get<KnownMtServersResponse>(
+      `/known-mt-servers/${version}/search`,
+      { params }
+    );
+    return response.data ?? {};
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const data = err?.response?.data as MetaApiProvisioningErrorBody | undefined;
+    const message = data?.message ?? err?.message ?? 'Failed to fetch known trading servers';
+    const details = data?.details;
+    const code =
+      typeof details === 'object' && details !== null && 'code' in details
+        ? (details as { code?: string }).code
+        : typeof details === 'string'
+          ? details
+          : undefined;
+    if (status >= 400 && status <= 499) {
+      throw new MetaApiProvisioningError(message, status, code, details);
+    }
+    throw new MetaApiProvisioningError(message, status ?? 500, code, details);
+  }
 }
 
 /**

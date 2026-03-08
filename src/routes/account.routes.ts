@@ -7,6 +7,7 @@ const router = Router();
 router.post('/', authGuard(), accountController.link);
 router.post('/provision', authGuard(), accountController.provision);
 router.get('/', authGuard(), accountController.list);
+router.get('/servers', authGuard(), accountController.servers);
 router.delete('/:id', authGuard(), accountController.unlink);
 
 router.post('/:id/sync-state', authGuard(), accountController.syncState);

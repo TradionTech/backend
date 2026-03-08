@@ -1003,9 +1003,38 @@ const swaggerDefinition = {
             },
           },
           400: {
-            description: 'Validation error (missing/invalid fields)',
+            description: 'Validation error (missing/invalid fields) or MetaAPI provisioning error',
             content: {
-              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    error: { type: 'string', description: 'User-facing message' },
+                    code: {
+                      type: 'string',
+                      description: 'MetaAPI error code when provisioning failed',
+                      enum: [
+                        'E_SRV_NOT_FOUND',
+                        'E_AUTH',
+                        'E_SERVER_TIMEZONE',
+                        'E_RESOURCE_SLOTS',
+                        'E_NO_SYMBOLS',
+                        'ERR_OTP_REQUIRED',
+                        'E_PASSWORD_CHANGE_REQUIRED',
+                        'E_TRADING_ACCOUNT_DISABLED',
+                      ],
+                    },
+                    details: {
+                      type: 'object',
+                      description: 'Optional: suggested_servers (broker -> server names), recommended_resource_slots',
+                      properties: {
+                        suggested_servers: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+                        recommended_resource_slots: { type: 'number' },
+                      },
+                    },
+                  },
+                },
+              },
             },
           },
           401: {
@@ -1074,9 +1103,29 @@ const swaggerDefinition = {
             },
           },
           400: {
-            description: 'Missing metaapi_account_id',
+            description: 'Missing metaapi_account_id or MetaAPI returned bad request',
             content: {
               'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          403: {
+            description: 'Forbidden (MetaAPI token or permissions)',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          404: {
+            description: 'MetaAPI account not found (invalid metaapi_account_id)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    error: { type: 'string', example: 'MetaAPI account not found' },
+                    code: { type: 'string', example: 'METAAPI_ACCOUNT_NOT_FOUND' },
+                  },
+                },
+              },
             },
           },
           401: {
@@ -1100,6 +1149,39 @@ const swaggerDefinition = {
                 schema: {
                   type: 'array',
                   items: { $ref: '#/components/schemas/MetaApiAccountListItem' },
+                },
+              },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/accounts/servers': {
+      get: {
+        tags: ['Accounts'],
+        summary: 'Get known trading servers (MT4 or MT5)',
+        description:
+          'Returns a map of broker names to server names for dropdown/search. Uses MetaAPI known-mt-servers API. Optional query filters results.',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { in: 'query', name: 'version', required: false, schema: { type: 'string', enum: ['4', '5'] }, description: 'MT version (4 or 5). Default 5.' },
+          { in: 'query', name: 'query', required: false, schema: { type: 'string' }, description: 'Search filter (e.g. broker name)' },
+        ],
+        responses: {
+          200: {
+            description: 'Broker name -> list of server names',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: { type: 'array', items: { type: 'string' } },
+                  example: { 'Raw Trading Ltd': ['ICMarketsSC-Demo', 'ICMarketsSC-MT5'] },
                 },
               },
             },

@@ -1,6 +1,7 @@
 import type { TradeHistory } from '../../db/models/TradeHistory.js';
 import type { AnalyzableTrade, JournalStatsBucket, JournalStatsBucketKey, BehaviourPattern } from './journalTypes.js';
 import type { UserProfileMetrics } from '../profile/profileTypes.js';
+import type { MetaApiMetatraderDeal } from '../../types/metaapi.js';
 
 /**
  * Configuration thresholds for pattern detection.
@@ -170,6 +171,93 @@ export function mapTradeHistoryToAnalyzable(
     id: String(entry.id),
     userId,
     symbol: entry.symbol || '',
+    side,
+    entryPrice,
+    stopPrice,
+    exitPrice,
+    quantity,
+    openedAt: timeOpen,
+    closedAt: timeClose,
+    realizedPnlUsd,
+    realizedRr,
+    timeframe,
+    sessionLabel,
+    strategyTag,
+  };
+}
+
+/**
+ * Map a pair of MetaAPI deals (entry IN + exit OUT) to AnalyzableTrade.
+ * Source of truth is MetaAPI; use for journal dashboard when not reading from DB.
+ */
+export function mapMetaApiDealPairToAnalyzable(
+  entryDeal: MetaApiMetatraderDeal,
+  exitDeal: MetaApiMetatraderDeal,
+  userId: string
+): AnalyzableTrade | null {
+  const timeOpen = entryDeal.time ? new Date(entryDeal.time) : null;
+  const timeClose = exitDeal.time ? new Date(exitDeal.time) : null;
+  if (!timeOpen || !timeClose) return null;
+
+  const side: 'long' | 'short' =
+    entryDeal.type?.includes('BUY') || entryDeal.type?.toLowerCase() === 'deal_type_buy'
+      ? 'long'
+      : 'short';
+  const entryPrice = entryDeal.price ?? 0;
+  const exitPrice = exitDeal.price ?? 0;
+  const quantity = entryDeal.volume ?? 0;
+  const stopPrice = entryDeal.stopLoss ?? null;
+
+  if (entryPrice <= 0 || exitPrice <= 0 || quantity <= 0) return null;
+
+  let realizedPnlUsd = exitDeal.profit ?? (side === 'long' ? (exitPrice - entryPrice) * quantity : (entryPrice - exitPrice) * quantity);
+  if (exitDeal.commission != null) realizedPnlUsd -= exitDeal.commission;
+  if (exitDeal.swap != null) realizedPnlUsd -= exitDeal.swap;
+
+  let realizedRr: number | null = null;
+  if (stopPrice != null && stopPrice > 0) {
+    const riskUsd = Math.abs(entryPrice - stopPrice) * quantity;
+    if (riskUsd > 0) {
+      const rewardUsd = Math.abs(exitPrice - entryPrice) * quantity;
+      realizedRr = rewardUsd / riskUsd;
+    }
+  }
+
+  const durationMs = timeClose.getTime() - timeOpen.getTime();
+  const durationHours = durationMs / (1000 * 60 * 60);
+  let timeframe: string | null = null;
+  if (durationHours < TIMEFRAME_DURATION_HOURS.SCALP) timeframe = 'scalp';
+  else if (durationHours < TIMEFRAME_DURATION_HOURS.INTRADAY) timeframe = 'intraday';
+  else if (durationHours < TIMEFRAME_DURATION_HOURS.SWING) timeframe = 'swing';
+  else timeframe = 'position';
+
+  const entryHour = timeOpen.getUTCHours();
+  let sessionLabel: string | null = null;
+  if (entryHour >= SESSION_HOURS.OVERLAP.start && entryHour < SESSION_HOURS.OVERLAP.end) sessionLabel = 'Overlap';
+  else if (entryHour >= SESSION_HOURS.LONDON.start && entryHour < SESSION_HOURS.LONDON.end) sessionLabel = 'London';
+  else if (entryHour >= SESSION_HOURS.NY.start && entryHour < SESSION_HOURS.NY.end) sessionLabel = 'NY';
+  else if (entryHour >= SESSION_HOURS.ASIA.start && entryHour < SESSION_HOURS.ASIA.end) sessionLabel = 'Asia';
+  else sessionLabel = 'Other';
+
+  const comment = entryDeal.comment || entryDeal.brokerComment || '';
+  let strategyTag: string | null = null;
+  if (comment) {
+    const lower = comment.toLowerCase();
+    if (lower.includes('breakout') || lower.includes('break')) strategyTag = 'breakout';
+    else if (lower.includes('reversal')) strategyTag = 'reversal';
+    else if (lower.includes('trend') || lower.includes('momentum')) strategyTag = 'trend';
+    else if (lower.includes('scalp')) strategyTag = 'scalp';
+    else if (lower.includes('swing')) strategyTag = 'swing';
+  }
+
+  const id = entryDeal.positionId
+    ? `${entryDeal.positionId}-${entryDeal.id}-${exitDeal.id}`
+    : `${entryDeal.id}-${exitDeal.id}`;
+
+  return {
+    id,
+    userId,
+    symbol: entryDeal.symbol ?? '',
     side,
     entryPrice,
     stopPrice,

@@ -1,12 +1,12 @@
-import { Op } from 'sequelize';
-import { TradeHistory } from '../../db/models/TradeHistory.js';
 import { JournalEntry } from '../../db/models/JournalEntry.js';
 import { MetaApiAccount } from '../../db/models/MetaApiAccount.js';
-import { TradingPosition } from '../../db/models/TradingPosition.js';
-import { AccountEquitySnapshot } from '../../db/models/AccountEquitySnapshot.js';
 import { getUserProfileMetrics } from '../profile/profileService.js';
 import {
-  mapTradeHistoryToAnalyzable,
+  getHistoryDealsByTimeRange,
+  getOpenPositions,
+} from '../brokers/metaapi.js';
+import {
+  mapMetaApiDealPairToAnalyzable,
   computeWinRate,
   computeAvgRr,
   computeAvgPnlUsd,
@@ -15,6 +15,7 @@ import {
   bucketTrades,
   detectBehaviourPatterns,
 } from './journalAnalytics.js';
+import type { MetaApiMetatraderDeal } from '../../types/metaapi.js';
 import type {
   JournalAnalysisRequest,
   JournalContextForLLM,
@@ -36,86 +37,57 @@ const DEFAULT_CONFIG = {
   MIN_TRADES_FOR_ANALYSIS: 30,
 } as const;
 
-/**
- * Reconstruct complete trades from TradeHistory deals.
- * Handles both complete trades (with timeOpen and timeClose) and grouped deals by positionId.
- * Reuses logic from profileService but adapted for journal analysis.
- */
-function reconstructTradesFromHistory(
-  historyRecords: TradeHistory[]
-): Array<{ entry: TradeHistory; exit?: TradeHistory }> {
-  const trades: Array<{ entry: TradeHistory; exit?: TradeHistory }> = [];
-  const tradesByPosition = new Map<string, { entry?: TradeHistory; exit?: TradeHistory }>();
+/** In-memory cache for getTradesForWindow (MetaAPI). TTL 60s; source of truth remains MetaAPI. */
+const TRADES_CACHE_TTL_MS = 60_000;
+const tradesCache = new Map<
+  string,
+  { trades: AnalyzableTrade[]; expiresAt: number }
+>();
 
-  for (const record of historyRecords) {
-    // If record has both timeOpen and timeClose, treat as complete trade
-    if (record.timeOpen != null && record.timeClose != null) {
-      trades.push({ entry: record, exit: record });
-      continue;
-    }
-
-    // Otherwise, group by positionId
-    const positionId = record.positionId;
-    if (!positionId) {
-      // Skip records without positionId and without both timeOpen/timeClose
-      continue;
-    }
-
-    if (!tradesByPosition.has(positionId)) {
-      tradesByPosition.set(positionId, {});
-    }
-
-    const trade = tradesByPosition.get(positionId)!;
-
-    // Check if this is an entry or exit deal
-    if (
-      record.entryType === 'DEAL_ENTRY_IN' ||
-      (record.entryType == null && record.timeOpen != null)
-    ) {
-      if (
-        !trade.entry ||
-        (record.timeOpen && trade.entry.timeOpen && record.timeOpen < trade.entry.timeOpen)
-      ) {
-        trade.entry = record;
-      }
-    } else if (
-      record.entryType === 'DEAL_ENTRY_OUT' ||
-      (record.entryType == null && record.timeClose != null)
-    ) {
-      if (
-        !trade.exit ||
-        (record.timeClose && trade.exit.timeClose && record.timeClose > trade.exit.timeClose)
-      ) {
-        trade.exit = record;
-      }
-    }
-  }
-
-  // Add grouped trades that have both entry and exit
-  for (const { entry, exit } of tradesByPosition.values()) {
-    if (entry && exit) {
-      trades.push({ entry, exit });
-    }
-  }
-
-  return trades;
+function getTradesCacheKey(userId: string, from: Date, to: Date): string {
+  return `trades:${userId}:${from.getTime()}:${to.getTime()}`;
 }
 
 /**
- * Get equity at open time for a trade.
+ * Group MetaAPI deals by positionId into entry (DEAL_ENTRY_IN) + exit (DEAL_ENTRY_OUT / DEAL_ENTRY_OUT_BY).
+ * Only trading deals (DEAL_TYPE_BUY / DEAL_TYPE_SELL).
  */
-async function getEquityAtOpen(accountId: number, timeOpen: Date): Promise<number | null> {
-  const snapshot = await AccountEquitySnapshot.findOne({
-    where: {
-      accountId,
-      takenAt: { [Op.lte]: timeOpen },
-    },
-    order: [['takenAt', 'DESC']],
-  });
-  if (snapshot && snapshot.equity != null) {
-    return Number(snapshot.equity);
+function reconstructTradesFromMetaApiDeals(
+  deals: MetaApiMetatraderDeal[]
+): Array<{ entry: MetaApiMetatraderDeal; exit: MetaApiMetatraderDeal }> {
+  const tradingTypes = ['DEAL_TYPE_BUY', 'DEAL_TYPE_SELL'];
+  const entryTypes = ['DEAL_ENTRY_IN'];
+  const exitTypes = ['DEAL_ENTRY_OUT', 'DEAL_ENTRY_OUT_BY'];
+  const byPosition = new Map<
+    string,
+    { entry?: MetaApiMetatraderDeal; exit?: MetaApiMetatraderDeal }
+  >();
+
+  for (const deal of deals) {
+    if (!tradingTypes.includes(deal.type)) continue;
+    const posId = deal.positionId ?? deal.id;
+    if (!byPosition.has(posId)) byPosition.set(posId, {});
+    const slot = byPosition.get(posId)!;
+    if (entryTypes.includes(deal.entryType ?? '')) {
+      if (
+        !slot.entry ||
+        (deal.time && slot.entry.time && deal.time < slot.entry.time)
+      )
+        slot.entry = deal;
+    } else if (exitTypes.includes(deal.entryType ?? '')) {
+      if (
+        !slot.exit ||
+        (deal.time && slot.exit.time && deal.time > slot.exit.time)
+      )
+        slot.exit = deal;
+    }
   }
-  return null;
+
+  const pairs: Array<{ entry: MetaApiMetatraderDeal; exit: MetaApiMetatraderDeal }> = [];
+  for (const { entry, exit } of byPosition.values()) {
+    if (entry && exit) pairs.push({ entry, exit });
+  }
+  return pairs;
 }
 
 /**
@@ -171,7 +143,7 @@ function extractCommonThemes(entries: JournalEntry[]): string[] {
 export class JournalService {
   /**
    * Get reconstructed analyzable trades for a user and date window (for dashboard/aggregations).
-   * Uses all linked MetaApi accounts. Optional from/to; defaults to last 2 years.
+   * Source of truth: MetaAPI. Results are cached for 60s for faster repeat requests.
    */
   async getTradesForWindow(req: {
     userId: string;
@@ -186,47 +158,90 @@ export class JournalService {
       from ||
       new Date(windowTo.getTime() - 730 * 24 * 60 * 60 * 1000); // ~2 years
 
+    const cacheKey = getTradesCacheKey(userId, windowFrom, windowTo);
+    const cached = tradesCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.trades.slice(0, maxTrades);
+    }
+
+    const trades = await this.getTradesForWindowFromMetaApi({
+      userId,
+      from: windowFrom,
+      to: windowTo,
+      maxTrades,
+    });
+    tradesCache.set(cacheKey, {
+      trades,
+      expiresAt: Date.now() + TRADES_CACHE_TTL_MS,
+    });
+    return trades;
+  }
+
+  /**
+   * Fetch closed trades from MetaAPI (history deals) for all user accounts.
+   * Source of truth; no DB read.
+   */
+  private async getTradesForWindowFromMetaApi(req: {
+    userId: string;
+    from: Date;
+    to: Date;
+    maxTrades: number;
+  }): Promise<AnalyzableTrade[]> {
+    const { userId, from, to, maxTrades } = req;
     const accounts = await MetaApiAccount.findAll({
       where: { userId },
-      attributes: ['id'],
+      attributes: ['metaapiAccountId'],
     });
     if (accounts.length === 0) return [];
-    const accountIds = accounts.map((acc) => acc.id);
 
-    const historyRecords = await TradeHistory.findAll({
-      where: {
-        accountId: { [Op.in]: accountIds },
-        [Op.or]: [{ timeClose: { [Op.ne]: null } }, { entryType: 'DEAL_ENTRY_OUT' }],
-        timeClose: { [Op.between]: [windowFrom, windowTo] },
-      },
-      order: [
-        ['timeClose', 'DESC NULLS LAST'],
-        ['time', 'DESC'],
-      ],
-      limit: maxTrades * 2,
-    });
-
-    const reconstructed = reconstructTradesFromHistory(historyRecords);
-    const analyzableTrades: AnalyzableTrade[] = [];
-    let processedCount = 0;
-
-    for (const { entry, exit } of reconstructed) {
-      if (processedCount >= maxTrades) break;
-      const equityAtOpen = await getEquityAtOpen(entry.accountId, entry.timeOpen!);
-      const analyzableTrade = mapTradeHistoryToAnalyzable(entry, exit, userId);
-      if (analyzableTrade) {
-        analyzableTrade.equityAtOpenUsd = equityAtOpen ?? undefined;
-        analyzableTrades.push(analyzableTrade);
-        processedCount++;
+    const allDeals: MetaApiMetatraderDeal[] = [];
+    for (const acc of accounts) {
+      const metaapiAccountId = acc.metaapiAccountId as string;
+      try {
+        const deals = await getHistoryDealsByTimeRange(metaapiAccountId, from, to, {
+          maxDeals: maxTrades * 3,
+        });
+        allDeals.push(...deals);
+      } catch {
+        // Skip account on failure (e.g. not connected)
       }
     }
 
+    const pairs = reconstructTradesFromMetaApiDeals(allDeals);
+    const analyzableTrades: AnalyzableTrade[] = [];
+    const byClose = [...pairs].sort((a, b) => {
+      const tA = a.exit.time ? new Date(a.exit.time).getTime() : 0;
+      const tB = b.exit.time ? new Date(b.exit.time).getTime() : 0;
+      return tB - tA;
+    });
+    for (const { entry, exit } of byClose) {
+      if (analyzableTrades.length >= maxTrades) break;
+      const t = mapMetaApiDealPairToAnalyzable(entry, exit, userId);
+      if (t) analyzableTrades.push(t);
+    }
     return analyzableTrades;
+  }
+
+  /** Count open positions across user's MetaAPI accounts (live from MetaAPI). */
+  async getOpenPositionsCount(userId: string): Promise<number> {
+    const accounts = await MetaApiAccount.findAll({
+      where: { userId },
+      attributes: ['metaapiAccountId'],
+    });
+    if (accounts.length === 0) return 0;
+    const results = await Promise.allSettled(
+      accounts.map((acc) => getOpenPositions(acc.metaapiAccountId as string))
+    );
+    let total = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled' && Array.isArray(r.value)) total += r.value.length;
+    }
+    return total;
   }
 
   /**
    * Build complete journal context for LLM consumption.
-   * Orchestrates data gathering, trade mapping, stats computation, and pattern detection.
+   * Source of truth for trades and open positions: MetaAPI. Trades are cached 60s.
    */
   async buildJournalContext(req: JournalAnalysisRequest): Promise<JournalContextForLLM> {
     const { userId, from, to, maxTrades = DEFAULT_CONFIG.MAX_TRADES } = req;
@@ -238,55 +253,20 @@ export class JournalService {
       from ||
       new Date(windowTo.getTime() - DEFAULT_CONFIG.DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
-    // Get all MetaApi accounts for this user
+    // Trades from MetaAPI (cached 60s)
+    const analyzableTrades = await this.getTradesForWindow({
+      userId,
+      from: windowFrom,
+      to: windowTo,
+      maxTrades,
+    });
+
     const accounts = await MetaApiAccount.findAll({
       where: { userId },
       attributes: ['id'],
     });
-
     if (accounts.length === 0) {
-      // No accounts, return empty context
       return this.buildEmptyContext(userId, windowFrom, windowTo);
-    }
-
-    const accountIds = accounts.map((acc) => acc.id);
-
-    // Query closed trades in time window
-    const historyRecords = await TradeHistory.findAll({
-      where: {
-        accountId: { [Op.in]: accountIds },
-        [Op.or]: [{ timeClose: { [Op.ne]: null } }, { entryType: 'DEAL_ENTRY_OUT' }],
-        timeClose: { [Op.between]: [windowFrom, windowTo] },
-      },
-      order: [
-        ['timeClose', 'DESC NULLS LAST'],
-        ['time', 'DESC'],
-      ],
-      limit: maxTrades * 2, // Get more records to account for grouping
-    });
-
-    // Reconstruct complete trades
-    const reconstructedTrades = reconstructTradesFromHistory(historyRecords);
-
-    // Map to AnalyzableTrade and get equity snapshots
-    const analyzableTrades: AnalyzableTrade[] = [];
-    let processedCount = 0;
-
-    for (const { entry, exit } of reconstructedTrades) {
-      if (processedCount >= maxTrades) {
-        break;
-      }
-
-      // Get equity at open
-      const equityAtOpen = await getEquityAtOpen(entry.accountId, entry.timeOpen!);
-
-      // Map to analyzable trade
-      const analyzableTrade = mapTradeHistoryToAnalyzable(entry, exit, userId);
-      if (analyzableTrade) {
-        analyzableTrade.equityAtOpenUsd = equityAtOpen;
-        analyzableTrades.push(analyzableTrade);
-        processedCount++;
-      }
     }
 
     // Load profile metrics
@@ -392,8 +372,7 @@ export class JournalService {
       const cur = byMonth.get(month)!;
       return { month, winRate: cur.count > 0 ? (cur.wins / cur.count) * 100 : 0 };
     });
-    const openPositionsCount =
-      accountIds.length === 0 ? 0 : await TradingPosition.count({ where: { accountId: { [Op.in]: accountIds } } });
+    const openPositionsCount = await this.getOpenPositionsCount(userId);
     const dashboardSummary: JournalDashboardSummary = {
       netPnl,
       monthlyPnl,

@@ -381,6 +381,38 @@ export async function getHistory(metaapiAccountId: string, from?: Date, to?: Dat
   return connection.getHistoryOrdersByTimeRange(start, end);
 }
 
+/**
+ * Fetch history deals in a time range from MetaAPI REST API (source of truth for closed trades).
+ * Paginates automatically up to maxDeals. Use for journal dashboard and analysis.
+ * See https://metaapi.cloud/docs/client/restApi/api/retrieveHistoricalData/readDealsByTimeRange/
+ */
+export async function getHistoryDealsByTimeRange(
+  metaapiAccountId: string,
+  start: Date,
+  end: Date,
+  options?: { limit?: number; maxDeals?: number }
+): Promise<MetaApiMetatraderDeal[]> {
+  const limit = Math.min(options?.limit ?? 1000, 1000);
+  const maxDeals = options?.maxDeals ?? 10_000;
+  const region = await getAccountRegion(metaapiAccountId);
+  const client = createMetaApiRestClient(region);
+  const startTime = start.toISOString();
+  const endTime = end.toISOString();
+  const all: MetaApiMetatraderDeal[] = [];
+  let offset = 0;
+  while (all.length < maxDeals) {
+    const response = await client.get<MetaApiMetatraderDeal[]>(
+      `/users/current/accounts/${metaapiAccountId}/history-deals/time/${startTime}/${endTime}`,
+      { params: { offset, limit } }
+    );
+    const chunk = response.data ?? [];
+    all.push(...chunk);
+    if (chunk.length < limit) break;
+    offset += limit;
+  }
+  return all.slice(0, maxDeals);
+}
+
 export async function getBalance(metaapiAccountId: string) {
   try {
     const account = await ensureConnected(metaapiAccountId);

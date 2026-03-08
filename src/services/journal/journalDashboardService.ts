@@ -1,6 +1,3 @@
-import { Op } from 'sequelize';
-import { MetaApiAccount } from '../../db/models/MetaApiAccount.js';
-import { TradingPosition } from '../../db/models/TradingPosition.js';
 import { journalService } from './journalService.js';
 import { computeWinRate, computeMaxDrawdownPct } from './journalAnalytics.js';
 
@@ -73,9 +70,7 @@ export const journalDashboardService = {
     const to = new Date();
     const from = new Date(to.getTime() - DEFAULT_WINDOW_MS);
     const trades = await journalService.getTradesForWindow({ userId, from, to });
-    const accountIds = (await MetaApiAccount.findAll({ where: { userId }, attributes: ['id'] })).map((a) => a.id);
-    const openPositionsCount =
-      accountIds.length === 0 ? 0 : await TradingPosition.count({ where: { accountId: { [Op.in]: accountIds } } });
+    const openPositionsCount = await journalService.getOpenPositionsCount(userId);
 
     const netPnl = trades.reduce((sum, t) => sum + t.realizedPnlUsd, 0);
     const winRate = computeWinRate(trades);
@@ -133,7 +128,11 @@ export const journalDashboardService = {
     };
   },
 
-  async getCalendarMonth(userId: string, year: number, month: number): Promise<CalendarDayResponse[]> {
+  async getCalendarMonth(
+    userId: string,
+    year: number,
+    month: number
+  ): Promise<CalendarDayResponse[]> {
     const start = new Date(Date.UTC(year, month - 1, 1));
     const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
     const trades = await journalService.getTradesForWindow({ userId, from: start, to: end });
@@ -197,8 +196,12 @@ export const journalDashboardService = {
     const maxDrawdown = computeMaxDrawdownPct(trades);
     const winners = trades.filter((t) => t.realizedPnlUsd > 0);
     const losers = trades.filter((t) => t.realizedPnlUsd < 0);
-    const avgWin = winners.length > 0 ? winners.reduce((s, t) => s + t.realizedPnlUsd, 0) / winners.length : null;
-    const avgLoss = losers.length > 0 ? losers.reduce((s, t) => s + t.realizedPnlUsd, 0) / losers.length : null;
+    const avgWin =
+      winners.length > 0
+        ? winners.reduce((s, t) => s + t.realizedPnlUsd, 0) / winners.length
+        : null;
+    const avgLoss =
+      losers.length > 0 ? losers.reduce((s, t) => s + t.realizedPnlUsd, 0) / losers.length : null;
     const pnls = trades.map((t) => t.realizedPnlUsd);
     const bestTrade = pnls.length > 0 ? Math.max(...pnls) : null;
     const worstTrade = pnls.length > 0 ? Math.min(...pnls) : null;

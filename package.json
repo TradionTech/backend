@@ -11,9 +11,11 @@
     "@aws-sdk/s3-request-presigner": "^3.983.0",
     "@clerk/clerk-sdk-node": "^4.13.23",
     "@clerk/express": "^1.7.41",
+    "@clerk/backend": "^1.14.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.25",
     "@types/morgan": "^1.9.10",
+    "@types/multer": "^2.0.0",
     "@types/node-cron": "^3.0.11",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
@@ -22,7 +24,9 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
+    "gpt-tokenizer": "^3.4.0",
     "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
     "joi": "^17.13.3",
     "metaapi.cloud-sdk": "^29.3.1",
     "morgan": "^1.10.0",
@@ -35,12 +39,13 @@
     "swagger-ui-express": "^5.0.1",
     "uuid": "^13.0.0",
     "winston": "^3.12.0",
-    "@types/multer": "^2.0.0"
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
     "@types/node": "^20.14.12",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
     "eslint": "^9.9.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-import": "^2.29.1",
@@ -61,6 +66,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "db:sync": "tsx src/db/sequelize.ts --sync",
-    "jobs:run": "tsx src/jobs/scheduler.ts"
+    "jobs:run": "tsx src/jobs/scheduler.ts",
+    "streaming:run": "tsx src/streaming/streamingService.ts"
   }
 }

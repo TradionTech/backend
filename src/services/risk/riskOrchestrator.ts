@@ -23,7 +23,8 @@ import { User } from '../../db/models/User';
 import { MetaApiAccount } from '../../db/models/MetaApiAccount';
 import { AccountEquitySnapshot } from '../../db/models/AccountEquitySnapshot';
 import { TradingPosition } from '../../db/models/TradingPosition';
-import { groqCompoundClient } from '../ai/groqCompoundClient';
+import { getChatLLM } from '../ai/llm/chatLLM';
+import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 
 /**
@@ -365,7 +366,8 @@ Return ONLY valid JSON in this format:
 
       const userMessage = `User message: ${message}${contextInfo}\n\nExtract trade intent as JSON.`;
 
-      const response = await groqCompoundClient.completeChat({
+      const chatClient = getChatLLM(env.GROQ_MODEL ?? 'groq/compound');
+      const response = await chatClient.completeChat({
         messages: [
           { role: 'system', content: systemPrompt },
           ...conversationHistory.slice(-3), // Last 3 messages for context

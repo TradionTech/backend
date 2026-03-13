@@ -10,6 +10,8 @@ const ChatSchema = Joi.object({
   session_id: Joi.string().uuid().optional(),
   message: Joi.string().max(2000).required(),
   message_type: Joi.string().valid('text').default('text'),
+  /** Optional model id for chat completion (must be allowed for user's plan). */
+  model_id: Joi.string().optional(),
   metadata: Joi.object({
     instrument: Joi.string().optional(),
     timeframe: Joi.string().optional(),
@@ -20,5 +22,6 @@ const ChatSchema = Joi.object({
 });
 
 router.post('/', authGuard(), validateBody(ChatSchema), chatController.postChat);
+router.post('/no-stream', authGuard(), validateBody(ChatSchema), chatController.postChatNoStream);
 
 export default router;

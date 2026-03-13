@@ -33,19 +33,44 @@ function getMatchContext(content: string, pattern: RegExp): { matchedPhrase: str
 /**
  * Post-processing safety guardrails to detect and prevent unsafe responses.
  * Scans for disallowed patterns and provides safe fallback messages.
+ * When a pattern matches, a two-step check (rule-based) can reclassify as educational.
  */
 export class SafetyGuard {
   /**
+   * Rule-based two-step: if the matched sentence looks educational (e.g. "you should sell when your stop is hit"),
+   * treat as safe and do not replace.
+   */
+  private isLikelyEducational(containingSentence: string): boolean {
+    const lower = containingSentence.toLowerCase();
+    const educationalCues = [
+      'when your stop',
+      'when the stop is hit',
+      'when the stop gets hit',
+      'when price hits your stop',
+      'in a backtest',
+      'for example',
+      'as an example',
+      'in general',
+      'typically',
+      'generally',
+      'in that case',
+      'in theory',
+      'as a rule',
+      'under those circumstances',
+    ];
+    return educationalCues.some((cue) => lower.includes(cue));
+  }
+
+  /**
    * Check if a response contains unsafe patterns.
    * Returns result with isSafe flag and optional fallback message.
+   * When a pattern matches, runs two-step check (educational vs execution) before applying fallback.
    */
   checkResponse(content: string): SafetyCheckResult {
-    const lowerContent = content.toLowerCase();
-
     // Pattern 1: Explicit execution instructions
     const executionPatterns = [
       /\b(?:buy|sell|enter|exit|open|close)\s+(?:a|an|the)?\s*(?:position|trade|order)\s+(?:at|now|immediately)/i,
-      /\b(?:you should|you must|you need to)\s+(?:buy|sell|enter|exit|open|close)/i,
+      /\b(?:you should|you must|you need to)\s+(?:buy|sell|enter|exit|open|close)\s+[^.]*(?:now|immediately|at\s+\$?[\d,])/i,
       /\b(?:place|execute|submit)\s+(?:a|an|the)?\s*(?:order|trade)/i,
       /\b(?:go|take)\s+(?:all-in|all in\b|long|short)\s+(?:on|at)/i,
     ];
@@ -54,6 +79,7 @@ export class SafetyGuard {
       const match = pattern.exec(content);
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
+        if (this.isLikelyEducational(containingSentence)) continue;
         logger.warn('Safety guard triggered: execution instruction detected', {
           pattern: pattern.toString(),
           matchedPhrase,
@@ -67,17 +93,18 @@ export class SafetyGuard {
       }
     }
 
-    // Pattern 2: Personalized advice with specific prices/amounts
+    // Pattern 2: Personalized advice with specific prices/amounts (imperative + price in same sentence)
     const personalizedPatterns = [
-      /\b(?:you should|you must|you need to|I recommend you)\s+.*\s+(?:at|for)\s+\$?[\d,]+/i,
-      /\b(?:buy|sell)\s+.*\s+(?:at|for)\s+\$?[\d,]+/i,
-      /\b(?:enter|exit)\s+.*\s+(?:at|for)\s+\$?[\d,]+/i,
+      /\b(?:you should|you must|you need to|I recommend you)\s+.*\s+(?:at|for)\s+\$?[\d,]+(?:\s+(?:now|immediately))?/i,
+      /\b(?:buy|sell)\s+.*\s+(?:at|for)\s+\$?[\d,]+(?:\s+(?:now|immediately))?/i,
+      /\b(?:enter|exit)\s+.*\s+(?:at|for)\s+\$?[\d,]+(?:\s+(?:now|immediately))?/i,
     ];
 
     for (const pattern of personalizedPatterns) {
       const match = pattern.exec(content);
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
+        if (this.isLikelyEducational(containingSentence)) continue;
         logger.warn('Safety guard triggered: personalized advice detected', {
           pattern: pattern.toString(),
           matchedPhrase,
@@ -102,6 +129,7 @@ export class SafetyGuard {
       const match = pattern.exec(content);
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
+        if (this.isLikelyEducational(containingSentence)) continue;
         logger.warn('Safety guard triggered: definitive prediction detected', {
           pattern: pattern.toString(),
           matchedPhrase,
@@ -125,6 +153,7 @@ export class SafetyGuard {
       const match = pattern.exec(content);
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
+        if (this.isLikelyEducational(containingSentence)) continue;
         logger.warn('Safety guard triggered: reckless behavior encouragement detected', {
           pattern: pattern.toString(),
           matchedPhrase,
@@ -149,6 +178,7 @@ export class SafetyGuard {
       const match = pattern.exec(content);
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
+        if (this.isLikelyEducational(containingSentence)) continue;
         logger.warn('Safety guard triggered: risk-specific imperative command detected', {
           pattern: pattern.toString(),
           matchedPhrase,
@@ -174,6 +204,7 @@ export class SafetyGuard {
       const match = pattern.exec(content);
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
+        if (this.isLikelyEducational(containingSentence)) continue;
         logger.warn('Safety guard triggered: journal coaching execution command detected', {
           pattern: pattern.toString(),
           matchedPhrase,
@@ -197,6 +228,7 @@ export class SafetyGuard {
       const match = pattern.exec(content);
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
+        if (this.isLikelyEducational(containingSentence)) continue;
         logger.warn('Safety guard triggered: medical/psychological advice detected', {
           pattern: pattern.toString(),
           matchedPhrase,
@@ -222,6 +254,7 @@ export class SafetyGuard {
       const match = pattern.exec(content);
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
+        if (this.isLikelyEducational(containingSentence)) continue;
         logger.warn('Safety guard triggered: sentiment-based trade call detected', {
           pattern: pattern.toString(),
           matchedPhrase,

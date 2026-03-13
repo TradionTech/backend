@@ -1,33 +1,19 @@
 import axios, { AxiosError } from 'axios';
+import { Readable } from 'stream';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
+import type {
+  ChatCompletionOptions,
+  ChatCompletionResult,
+  ChatMessage,
+  ChatStreamCallbacks,
+  IChatLLMClient,
+} from './llm/types';
 
-export interface GroqMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-export interface GroqChatOptions {
-  messages: GroqMessage[];
-  allowedTools?: string[];
-  maxTokens?: number;
-  temperature?: number;
-  responseFormat?: {
-    type: 'json_object' | 'json_schema';
-    json_schema?: any;
-  };
-}
-
-export interface GroqChatResponse {
-  id: string;
-  content: string;
-  finishReason: string;
-  usage?: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-  };
-}
+// Re-export shared types for backward compatibility
+export type GroqMessage = ChatMessage;
+export type GroqChatOptions = ChatCompletionOptions;
+export type GroqChatResponse = ChatCompletionResult;
 
 export interface GroqIntentResponse {
   intents: Array<{
@@ -85,13 +71,12 @@ interface GroqChatAPIResponse {
 }
 
 /**
- * Client for interacting with Groq's Compound model via OpenAI-compatible API.
- * Supports chat completions and intent detection.
+ * Client for interacting with Groq's chat models via OpenAI-compatible API.
+ * Implements IChatLLMClient for provider-agnostic use; supports configurable model per request.
  */
-export class GroqCompoundClient {
+export class GroqCompoundClient implements IChatLLMClient {
   private readonly apiKey: string;
   private readonly baseUrl = 'https://api.groq.com/openai/v1';
-  private readonly model = 'groq/compound';
   private readonly defaultTimeout: number;
   private readonly defaultTemperature: number;
   private readonly defaultMaxTokens: number;
@@ -101,18 +86,23 @@ export class GroqCompoundClient {
     if (!this.apiKey) {
       logger.warn('GROQ_API_KEY not set - Groq client will fail on API calls');
     }
-    // Use defaults from env or fallback to safe defaults
     this.defaultTimeout = env.GROQ_TIMEOUT || 30000;
     this.defaultTemperature = env.GROQ_TEMPERATURE || 0.7;
     this.defaultMaxTokens = env.GROQ_MAX_TOKENS || 2000;
   }
 
+  private resolveModel(options: ChatCompletionOptions): string {
+    return options.modelId ?? env.GROQ_MODEL ?? 'groq/compound';
+  }
+
   /**
-   * Complete a chat conversation using Groq Compound model.
-   * Supports built-in tool selection for web_search, code_interpreter, browser_automation, wolfram_alpha.
-   * Uses compound_custom.tools.enabled_tools for built-in Compound tools (not OpenAI-style function tools).
+   * Stream a chat completion from Groq (OpenAI-compatible SSE).
+   * Calls onChunk with each content delta; aggregates and returns full content and metadata.
    */
-  async completeChat(options: GroqChatOptions): Promise<GroqChatResponse> {
+  async completeChatStream(
+    options: ChatCompletionOptions,
+    callbacks: ChatStreamCallbacks
+  ): Promise<ChatCompletionResult> {
     const {
       messages,
       allowedTools = [],
@@ -120,6 +110,126 @@ export class GroqCompoundClient {
       temperature = this.defaultTemperature,
       responseFormat,
     } = options;
+
+    const model = this.resolveModel(options);
+
+    if (!this.apiKey) {
+      throw new Error('GROQ_API_KEY is not configured');
+    }
+
+    const compound_custom =
+      allowedTools.length > 0 ? { tools: { enabled_tools: allowedTools } } : undefined;
+
+    const requestBody: any = {
+      model,
+      messages,
+      max_completion_tokens: maxTokens,
+      temperature,
+      stream: true,
+    };
+    if (compound_custom) requestBody.compound_custom = compound_custom;
+    if (responseFormat) requestBody.response_format = responseFormat;
+
+    const response = await axios.post<Readable>(
+      `${this.baseUrl}/chat/completions`,
+      requestBody,
+      {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: this.defaultTimeout,
+        responseType: 'stream',
+        validateStatus: () => true,
+      }
+    );
+
+    if (response.status !== 200) {
+      const errData = await this.readStreamToBuffer(response.data).then((b) => b.toString());
+      let message = errData;
+      try {
+        const parsed = JSON.parse(errData);
+        message = parsed?.error?.message || errData;
+      } catch {
+        // ignore
+      }
+      const err = new Error(`Groq API error (${response.status}): ${message}`) as Error & {
+        statusCode?: number;
+      };
+      err.statusCode = response.status;
+      throw err;
+    }
+
+    let fullContent = '';
+    let id = `groq_${Date.now()}`;
+    let finishReason = 'stop';
+    let usage: ChatCompletionResult['usage'];
+
+    const stream = response.data as Readable;
+    let buffer = '';
+
+    for await (const chunk of stream) {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === 'data: [DONE]') continue;
+        if (!trimmed.startsWith('data: ')) continue;
+        try {
+          const json = JSON.parse(trimmed.slice(6)) as {
+            id?: string;
+            choices?: Array<{ delta?: { content?: string }; finish_reason?: string }>;
+            usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+          };
+          if (json.id) id = json.id;
+          if (json.usage) {
+            usage = {
+              promptTokens: json.usage.prompt_tokens ?? 0,
+              completionTokens: json.usage.completion_tokens ?? 0,
+              totalTokens: json.usage.total_tokens ?? 0,
+            };
+          }
+          const choice = json.choices?.[0];
+          if (choice?.delta?.content) {
+            fullContent += choice.delta.content;
+            callbacks.onChunk?.(choice.delta.content);
+          }
+          if (choice?.finish_reason) finishReason = choice.finish_reason;
+        } catch {
+          // skip malformed line
+        }
+      }
+    }
+
+    return { id, content: fullContent, finishReason, usage };
+  }
+
+  private readStreamToBuffer(stream: Readable): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      stream.on('data', (ch: Buffer) => chunks.push(ch));
+      stream.on('end', () => resolve(Buffer.concat(chunks)));
+      stream.on('error', reject);
+    });
+  }
+
+  /**
+   * Complete a chat conversation using Groq.
+   * Supports built-in tool selection for web_search, code_interpreter, browser_automation, wolfram_alpha.
+   * Uses compound_custom.tools.enabled_tools for built-in Compound tools (not OpenAI-style function tools).
+   */
+  async completeChat(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
+    const {
+      messages,
+      allowedTools = [],
+      maxTokens = this.defaultMaxTokens,
+      temperature = this.defaultTemperature,
+      responseFormat,
+    } = options;
+
+    const model = this.resolveModel(options);
 
     if (!this.apiKey) {
       throw new Error('GROQ_API_KEY is not configured');
@@ -131,7 +241,7 @@ export class GroqCompoundClient {
       allowedTools.length > 0 ? { tools: { enabled_tools: allowedTools } } : undefined;
 
     const requestBody: any = {
-      model: this.model,
+      model,
       messages,
       max_completion_tokens: maxTokens, // Use max_completion_tokens instead of deprecated max_tokens
       temperature,
@@ -152,7 +262,7 @@ export class GroqCompoundClient {
 
     try {
       logger.debug('Calling Groq API', {
-        model: this.model,
+        model,
         messageCount: messages.length,
         hasTools: !!compound_custom,
         enabledTools: allowedTools,
@@ -237,7 +347,7 @@ export class GroqCompoundClient {
    */
   async detectIntent(
     message: string,
-    conversationHistory: GroqMessage[] = []
+    conversationHistory: ChatMessage[] = []
   ): Promise<GroqIntentResponse> {
     const systemPrompt = `You are an intent classifier for a trading education platform. Analyze the user's message and conversation context to determine:
 

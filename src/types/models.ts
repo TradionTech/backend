@@ -80,8 +80,24 @@ export interface MarketPrice {
 }
 
 export interface EconomicEvent {
-  time: string;
-  country: string;
-  title: string;
+  id?: string;
+  eventId: string;
+  time?: string;
+  dateUtc: Date | string;
+  name: string;
+  title?: string;
+  country?: string;
+  countryCode: string;
+  currencyCode: string;
+  periodType?: string | null;
+  volatility: string;
   impact?: string;
+  actual?: string | null;
+  revised?: string | null;
+  consensus?: string | null;
+  previous?: string | null;
+  unit?: string | null;
+  categoryId?: string | null;
+  isBetterThanExpected?: boolean | null;
+  lastUpdated?: string | null;
 }

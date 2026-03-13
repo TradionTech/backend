@@ -36,6 +36,36 @@ export interface IntentDetectionResult {
  * Uses Groq Compound for classification and caches user_level in session metadata.
  */
 export class IntentDetector {
+  private static readonly MAX_MESSAGE_LENGTH_FAST_PATH = 200;
+
+  /**
+   * Build a result when we skip Groq (single clear intent from keywords + cached level).
+   */
+  private buildFastPathResult(
+    singleIntent: Intent,
+    cachedLevel: 'novice' | 'intermediate' | 'advanced',
+    conversationId: string,
+    isRisk: boolean,
+    isChart: boolean,
+    isJournal: boolean,
+    isSentiment: boolean
+  ): IntentDetectionResult {
+    const coachingIntent =
+      isJournal && this.isJournalIntent(singleIntent)
+        ? this.mapJournalIntentToCoachingIntent(singleIntent)
+        : undefined;
+    return {
+      intents: [{ intent: singleIntent, confidence: 0.95 }],
+      primaryIntent: singleIntent,
+      user_level: cachedLevel,
+      isRiskRelated: isRisk,
+      isChartRelated: isChart,
+      isJournalRelated: isJournal,
+      isSentimentRelated: isSentiment,
+      coachingIntent,
+    };
+  }
+
   /**
    * Check if message contains chart-related keywords (rule-based heuristic).
    */
@@ -209,12 +239,77 @@ export class IntentDetector {
       const isJournalRelated = this.isJournalRelatedByKeywords(message);
       const isSentimentRelated = this.isSentimentRelatedByKeywords(message);
 
-      // Check if we have cached user_level in session metadata
+      // Fast path 1: chartId in metadata -> treat as chart_analysis, skip Groq
+      if (metadata?.chartId) {
+        const sessionMetadata = await conversationStore.getSessionMetadata(conversationId);
+        const cachedLevel = sessionMetadata?.user_level ?? 'intermediate';
+        return this.buildFastPathResult(
+          'chart_analysis',
+          cachedLevel,
+          conversationId,
+          false,
+          true,
+          false,
+          false
+        );
+      }
+
+      // Fast path 2: exactly one intent category from keywords, short message, and we have cached level
+      const singleIntentCount = [isRiskRelated, isChartRelated, isJournalRelated, isSentimentRelated].filter(
+        Boolean
+      ).length;
+      const shortMessage = message.trim().length < IntentDetector.MAX_MESSAGE_LENGTH_FAST_PATH;
       const sessionMetadata = await conversationStore.getSessionMetadata(conversationId);
       const cachedLevel = sessionMetadata?.user_level;
 
-      // If we have recent history and cached level, we can use a simpler classification
-      // Otherwise, do a full Groq call
+      if (singleIntentCount === 1 && shortMessage && cachedLevel) {
+        if (isRiskRelated) {
+          return this.buildFastPathResult(
+            'risk_evaluation',
+            cachedLevel,
+            conversationId,
+            true,
+            false,
+            false,
+            false
+          );
+        }
+        if (isChartRelated) {
+          return this.buildFastPathResult(
+            'chart_analysis',
+            cachedLevel,
+            conversationId,
+            false,
+            true,
+            false,
+            false
+          );
+        }
+        if (isJournalRelated) {
+          return this.buildFastPathResult(
+            'journal_coaching',
+            cachedLevel,
+            conversationId,
+            false,
+            false,
+            true,
+            false
+          );
+        }
+        if (isSentimentRelated) {
+          return this.buildFastPathResult(
+            'sentiment_snapshot',
+            cachedLevel,
+            conversationId,
+            false,
+            false,
+            false,
+            true
+          );
+        }
+      }
+
+      // If we have recent history and cached level, use Groq for intent but keep cached level
       if (cachedLevel && conversationHistory.length > 0) {
         // Use cached level, but still detect intent
         const intentResult = await groqCompoundClient.detectIntent(message, conversationHistory);

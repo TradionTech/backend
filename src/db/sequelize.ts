@@ -15,6 +15,7 @@ import { initTradeHistory } from './models/TradeHistory.js';
 import { initAccountEquitySnapshot } from './models/AccountEquitySnapshot.js';
 import { initUserProfileMetrics } from './models/UserProfileMetrics.js';
 import { initChartUpload } from './models/ChartUpload.js';
+import { initEconomicEvent } from './models/EconomicEvent.js';
 
 export const sequelize = new Sequelize(env.DATABASE_URL, {
   dialect: 'postgres',
@@ -41,6 +42,7 @@ export async function initSequelize() {
   initAccountEquitySnapshot(sequelize);
   initUserProfileMetrics(sequelize);
   initChartUpload(sequelize);
+  initEconomicEvent(sequelize);
 
   // Associations
   const {

@@ -1,5 +1,6 @@
 import { journalService } from './journalService.js';
 import { computeWinRate, computeMaxDrawdownPct } from './journalAnalytics.js';
+import { logger } from '../../config/logger.js';
 
 const DEFAULT_WINDOW_YEARS = 2;
 const DEFAULT_WINDOW_MS = DEFAULT_WINDOW_YEARS * 365 * 24 * 60 * 60 * 1000;
@@ -70,6 +71,7 @@ export const journalDashboardService = {
     const to = new Date();
     const from = new Date(to.getTime() - DEFAULT_WINDOW_MS);
     const trades = await journalService.getTradesForWindow({ userId, from, to });
+    logger.debug('getSummary', { trades: trades.length });
     const openPositionsCount = await journalService.getOpenPositionsCount(userId);
 
     const netPnl = trades.reduce((sum, t) => sum + t.realizedPnlUsd, 0);
@@ -85,13 +87,15 @@ export const journalDashboardService = {
     const pnlLast7Days = trades
       .filter((t) => t.closedAt && t.closedAt >= day7)
       .reduce((s, t) => s + t.realizedPnlUsd, 0);
+    logger.debug('pnlLast7Days', { pnlLast7Days });
     const pnlLast30Days = trades
       .filter((t) => t.closedAt && t.closedAt >= day30)
       .reduce((s, t) => s + t.realizedPnlUsd, 0);
+    logger.debug('pnlLast30Days', { pnlLast30Days });
     const pnlCurrentMonth = trades
       .filter((t) => t.closedAt && t.closedAt >= startOfThisMonth)
       .reduce((s, t) => s + t.realizedPnlUsd, 0);
-
+    logger.debug('pnlCurrentMonth', { pnlCurrentMonth });
     const byMonth = new Map<string, { pnl: number; wins: number; count: number }>();
     for (const t of trades) {
       if (!t.closedAt) continue;

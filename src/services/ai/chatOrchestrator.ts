@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
 import { groqCompoundClient, type GroqMessage, type GroqChatResponse } from './groqCompoundClient';
+import { getChatLLM } from './llm/chatLLM';
 import { conversationStore } from './conversationStore';
-import { trimHistoryToTokenBudget } from './conversationTokenHelper';
+import { trimHistoryToTokenBudget, estimateTokens } from './conversationTokenHelper';
 import { env } from '../../config/env';
 import { intentDetector } from './intentDetector';
 import { promptBuilder, type UserLevel, type Intent } from './promptBuilder';
@@ -18,17 +19,26 @@ import { getSentimentWindowMinutesFromRequest } from '../sentiment/sentimentWind
 import type { SentimentContextForLLM } from '../sentiment/sentimentTypes';
 import { marketContextIntentExtractor } from '../market/marketContextIntentExtractor';
 import { logger } from '../../config/logger';
+import { contextCache, ContextCache } from '../cache/contextCache';
+import { economicCalendarService } from '../economicCalendar/economicCalendarService';
 
 export interface ChatRequest {
   userId: string;
   conversationId?: string;
   message: string;
+  /** Resolved model id for chat completion (from plan allowlist). */
+  modelId?: string;
   metadata?: {
     instrument?: string;
     timeframe?: string;
     chartId?: string;
     [key: string]: unknown;
   };
+}
+
+export interface ChatStreamCallbacks {
+  onProgress?: (stage: 'context' | 'generating' | 'safety_check') => void;
+  onChunk?: (text: string) => void;
 }
 
 export interface StructuredResponse {
@@ -46,6 +56,8 @@ export interface ChatResponse {
   user_level: UserLevel;
   low_confidence: boolean;
   response_id: string;
+  /** True when the safety guard replaced the model response with a fallback. */
+  safety_fallback?: boolean;
 }
 
 /**
@@ -63,8 +75,11 @@ export class ChatOrchestrator {
    * 6. Apply safety checks
    * 7. Save messages and return response
    */
-  async processMessage(request: ChatRequest): Promise<ChatResponse> {
-    const { userId, conversationId, message, metadata } = request;
+  async processMessage(
+    request: ChatRequest,
+    streamCallbacks?: ChatStreamCallbacks
+  ): Promise<ChatResponse> {
+    const { userId, conversationId, message, metadata, modelId } = request;
 
     try {
       // Step 1: Get or create conversation
@@ -118,148 +133,192 @@ export class ChatOrchestrator {
           user_level: intentResult.user_level,
           low_confidence: false, // Journal coaching is typically high confidence
           response_id: coachingResponse.responseId || `journal_${Date.now()}`,
+          safety_fallback: false,
         };
       }
 
-      // Step 4: Get market context (for all messages, check if needed)
-      // Check if ANY intent requires market context
+      // Step 4: Build context in parallel where possible.
+      // Batch 1: market + chart (independent); symbol extraction for sentiment if needed.
+      // Batch 2 (after market): risk + sentiment (risk needs market; sentiment needs symbol from batch 1 or metadata).
       const needsMarketContext = intentResult.intents.some(
         (item) =>
           item.intent === 'analysis' ||
           item.intent === 'validation' ||
           item.intent === 'risk_evaluation'
       );
-      const marketContext = await this.getMarketContext(
-        message,
-        metadata,
-        needsMarketContext ? intentResult.intents.map((i) => i.intent) : []
-      );
+      const needChart = intentResult.isChartRelated || !!metadata?.chartId;
+      const needSentimentSymbol = intentResult.isSentimentRelated && !metadata?.instrument;
 
-      // Step 4.5: If chart-related intent or chartId present, build chart context
-      let chartContext: ChartContextForLLM | null = null;
-      if (intentResult.isChartRelated || metadata?.chartId) {
-        try {
-          const chartAnalysisService = new ChartAnalysisService(new GroqChartVisionProvider());
-          chartContext = await chartAnalysisService.analyzeChart({
-            source: metadata?.chartId ? 'upload' : 'external_link',
-            chartId: metadata?.chartId as string | undefined,
-            symbolHint: metadata?.instrument as string | undefined,
-            timeframeHint: metadata?.timeframe as string | undefined,
-            userId,
-            rawQuery: message,
-          });
+      streamCallbacks?.onProgress?.('context');
 
-          logger.debug('Chart context built', {
-            conversationId: session.id,
-            chartId: chartContext.chartId,
-            symbol: chartContext.symbol,
-            patternsCount: chartContext.visionFeatures.patterns.length,
-          });
-        } catch (error) {
-          logger.warn('Failed to build chart context', {
-            error: (error as Error).message,
-            conversationId: session.id,
-            chartId: metadata?.chartId,
-          });
-          // Continue without chart context
-        }
-      }
+      const [marketContext, chartContextResult, sentimentSymbolExtracted] = await Promise.all([
+        needsMarketContext
+          ? this.getMarketContext(
+              message,
+              metadata,
+              needsMarketContext ? intentResult.intents.map((i) => i.intent) : []
+            )
+          : Promise.resolve(undefined),
+        needChart
+          ? this.buildChartContext(userId, message, metadata, session.id)
+          : Promise.resolve(null),
+        needSentimentSymbol
+          ? marketContextIntentExtractor
+              .extractContextRequest(message, {} as any)
+              .then((ex) => ex?.symbol)
+              .catch(() => undefined)
+          : Promise.resolve(undefined),
+      ]);
 
-      // Step 4.6: If risk-related intent, build risk context
+      const chartContext = chartContextResult;
+      const sentimentSymbol =
+        (metadata?.instrument as string | undefined) ?? sentimentSymbolExtracted;
+
+      // Batch 2: risk (needs marketContext) and sentiment (needs symbol)
       let riskContext: RiskContextForLLM | null = null;
       let correlationId: string | null = null;
-      if (intentResult.isRiskRelated) {
-        correlationId = randomUUID();
-        logger.debug('Building risk context', {
+      let sentimentContext: SentimentContextForLLM | null = null;
+
+      const [riskContextResult, sentimentContextResult] = await Promise.all([
+        intentResult.isRiskRelated
+          ? (async () => {
+              correlationId = randomUUID();
+              logger.debug('Building risk context', {
+                conversationId: session.id,
+                correlationId,
+                userId,
+              });
+              const rc = await riskOrchestrator.buildRiskContext(
+                userId,
+                message,
+                conversationHistory,
+                marketContext?.context
+              );
+              if (rc?.riskEvaluation) {
+                logger.info('Risk evaluation completed', {
+                  conversationId: session.id,
+                  correlationId,
+                  userId,
+                  riskPerTradePct: rc.riskEvaluation.riskMetrics.riskPerTradePct,
+                  policyFlagsCount: rc.riskEvaluation.policyFlags.length,
+                });
+              }
+              return rc;
+            })()
+          : Promise.resolve(null),
+        intentResult.isSentimentRelated && sentimentSymbol
+          ? (async () => {
+              const timeframeHint = metadata?.timeframe as string | undefined;
+              const windowMinutes = getSentimentWindowMinutesFromRequest(
+                message,
+                timeframeHint,
+                new Date()
+              );
+              const windowMinutesNum = windowMinutes ?? 1440;
+              if (!ContextCache.shouldSkipCache(message, metadata)) {
+                const cached = contextCache.getSentiment(sentimentSymbol, windowMinutesNum);
+                if (cached) {
+                  logger.debug('Sentiment context from cache', { symbol: sentimentSymbol });
+                  return cached;
+                }
+              }
+              logger.info('Building sentiment context', {
+                conversationId: session.id,
+                symbol: sentimentSymbol,
+                userId,
+                windowMinutes,
+              });
+              try {
+                const sc = await sentimentService.buildSentimentContext({
+                  symbol: sentimentSymbol,
+                  windowMinutes,
+                  timeframeHint,
+                  userId,
+                });
+                if (!ContextCache.shouldSkipCache(message, metadata)) {
+                  contextCache.setSentiment(sentimentSymbol, windowMinutesNum, sc);
+                }
+                logger.info('Sentiment context built', {
+                  conversationId: session.id,
+                  symbol: sentimentSymbol,
+                  aggregateScore: sc.aggregate?.score,
+                  direction: sc.aggregate?.direction,
+                  signalsUsed: sc.aggregate?.signalsUsed,
+                });
+                return sc;
+              } catch (err) {
+                logger.warn('Failed to build sentiment context', {
+                  error: (err as Error).message,
+                  conversationId: session.id,
+                });
+                return null;
+              }
+            })()
+          : Promise.resolve(null),
+      ]);
+
+      riskContext = riskContextResult;
+      sentimentContext = sentimentContextResult;
+
+      if (intentResult.isSentimentRelated && !sentimentSymbol) {
+        logger.warn('Could not resolve symbol for sentiment query', {
           conversationId: session.id,
-          correlationId,
-          userId,
+          message: message.substring(0, 100),
         });
-
-        riskContext = await riskOrchestrator.buildRiskContext(
-          userId,
-          message,
-          conversationHistory,
-          marketContext?.context
-        );
-
-        // Log risk evaluation if available
-        if (riskContext.riskEvaluation) {
-          logger.info('Risk evaluation completed', {
-            conversationId: session.id,
-            correlationId,
-            userId,
-            riskPerTradePct: riskContext.riskEvaluation.riskMetrics.riskPerTradePct,
-            policyFlagsCount: riskContext.riskEvaluation.policyFlags.length,
-          });
-        }
       }
 
-      // Step 4.7: If sentiment-related intent, build sentiment context
-      let sentimentContext: SentimentContextForLLM | null = null;
-      if (intentResult.isSentimentRelated) {
-        try {
-          // Resolve symbol from metadata or extract from message
-          let symbol: string | undefined = metadata?.instrument as string | undefined;
-          let extracted: { symbol?: string; timeframeHint?: string } | undefined;
-
-          if (!symbol) {
-            // Try to extract symbol from message using market context extractor
-            extracted = await marketContextIntentExtractor.extractContextRequest(
-              message,
-              {} as any
-            );
-            logger.info('marketContextIntentExtractor returned', { extracted });
-            symbol = extracted.symbol;
-          }
-
-          if (symbol) {
-            const timeframeHint =
-              (metadata?.timeframe as string | undefined) ?? extracted?.timeframeHint;
-            const windowMinutes = getSentimentWindowMinutesFromRequest(
-              message,
-              timeframeHint,
-              new Date()
-            );
-
-            logger.info('Building sentiment context', {
-              conversationId: session.id,
-              symbol,
-              userId,
-              windowMinutes,
-            });
-
-            sentimentContext = await sentimentService.buildSentimentContext({
-              symbol,
-              windowMinutes,
-              timeframeHint,
-              userId,
-            });
-
-            logger.info('Sentiment context built', {
-              conversationId: session.id,
-              symbol,
-              sentimentContext,
-              aggregateScore: sentimentContext.aggregate?.score,
-              direction: sentimentContext.aggregate?.direction,
-              signalsUsed: sentimentContext.aggregate?.signalsUsed,
-            });
-          } else {
-            logger.warn('Could not resolve symbol for sentiment query', {
-              conversationId: session.id,
-              message: message.substring(0, 100),
-            });
-          }
-        } catch (error) {
-          logger.warn('Failed to build sentiment context', {
-            error: (error as Error).message,
-            conversationId: session.id,
-          });
-          // Continue without sentiment context
+      // Step 4.8: Economic calendar context (next 7 days; optional FX country filter)
+      let economicCalendarContext = null;
+      try {
+        const now = new Date();
+        const to = new Date(now.getTime() + 7 * 86400000);
+        let countryCodes: string[] | undefined;
+        if (marketContext?.context?.instrument?.assetClass === 'FX') {
+          const base = marketContext.context.instrument.base;
+          const quote = marketContext.context.instrument.quote;
+          const currencyToCountry: Record<string, string> = {
+            USD: 'US',
+            EUR: 'EU',
+            GBP: 'UK',
+            JPY: 'JP',
+            CHF: 'CH',
+            AUD: 'AU',
+            CAD: 'CA',
+            NZD: 'NZ',
+          };
+          const codes: string[] = [];
+          if (base && currencyToCountry[base]) codes.push(currencyToCountry[base]);
+          if (quote && currencyToCountry[quote]) codes.push(currencyToCountry[quote]);
+          if (codes.length) countryCodes = [...new Set(codes)];
         }
+        economicCalendarContext = await economicCalendarService.getEventsForChat({
+          from: now,
+          to,
+          countryCodes,
+          limit: 50,
+        });
+      } catch (err) {
+        logger.warn('Failed to get economic calendar context', {
+          error: (err as Error).message,
+          conversationId: session.id,
+        });
       }
 
       // Step 5: Build system prompt (with optional conversation summary prefix)
+      const hasRiskIntentForPrompt = intentResult.intents.some((i) =>
+        ['risk_evaluation', 'position_sizing', 'risk_policy_explanation'].includes(i.intent)
+      );
+      const hasChartIntentForPrompt = intentResult.intents.some(
+        (i) => i.intent === 'chart_analysis'
+      );
+      const hasSentimentIntentForPrompt = intentResult.intents.some(
+        (i) => i.intent === 'sentiment_snapshot'
+      );
+      const useJsonOutput =
+        !(riskContext && hasRiskIntentForPrompt) &&
+        !(chartContext && hasChartIntentForPrompt) &&
+        !(sentimentContext && hasSentimentIntentForPrompt);
+
       let systemPrompt = promptBuilder.buildSystemPrompt({
         userLevel: intentResult.user_level,
         intents: intentResult.intents.map((i) => i.intent),
@@ -268,6 +327,8 @@ export class ChatOrchestrator {
         riskContext,
         chartContext,
         sentimentContext,
+        economicCalendarContext,
+        useJsonOutput,
       });
       if (systemPromptPrefix) {
         systemPrompt = systemPromptPrefix + systemPrompt;
@@ -280,7 +341,7 @@ export class ChatOrchestrator {
       const userMessageRecord = await conversationStore.saveMessage(session.id, 'user', message);
       const userMessageId = userMessageRecord.id;
 
-      // Step 8: Call Groq Compound (with 413 retry via summarized context)
+      // Step 8: Call Groq Compound (streaming or one-shot; with 413 retry via summarized context)
       logger.debug('Calling Groq Compound', {
         conversationId: session.id,
         intents: intentResult.intents
@@ -292,44 +353,69 @@ export class ChatOrchestrator {
         correlationId: correlationId || undefined,
       });
 
-      let groqResponse: Awaited<ReturnType<typeof groqCompoundClient.completeChat>>;
-      try {
-        groqResponse = await groqCompoundClient.completeChat({
-          messages,
-          allowedTools: ['web_search', 'code_interpreter'],
-          maxTokens: 2000,
-          temperature: 0.7,
-        });
-      } catch (chatErr) {
-        const err = chatErr as Error & { statusCode?: number };
-        const is413 =
-          err.statusCode === 413 ||
-          (err.message && (err.message.includes('413') || err.message.includes('Entity Too Large')));
-        if (is413) {
-          logger.info('Chat request too large (413), retrying with summarized context', {
-            conversationId: session.id,
+      streamCallbacks?.onProgress?.('generating');
+
+      const chatClient = getChatLLM(modelId);
+      let groqResponse: Awaited<ReturnType<typeof chatClient.completeChat>>;
+      if (streamCallbacks?.onChunk) {
+        groqResponse = await chatClient.completeChatStream(
+          {
+            messages,
+            modelId,
+            allowedTools: ['web_search', 'code_interpreter'],
+            maxTokens: 2000,
+            temperature: 0.7,
+            responseFormat: useJsonOutput ? { type: 'json_object' } : undefined,
+          },
+          { onChunk: streamCallbacks.onChunk }
+        );
+      } else {
+        try {
+          groqResponse = await chatClient.completeChat({
+            messages,
+            modelId,
+            allowedTools: ['web_search', 'code_interpreter'],
+            maxTokens: 2000,
+            temperature: 0.7,
+            responseFormat: useJsonOutput ? { type: 'json_object' } : undefined,
           });
-          const retryResult = await this.retryWithSummarizedContext(
-            systemPrompt,
-            conversationHistory,
-            message
-          );
-          groqResponse = {
-            id: retryResult.id,
-            content: retryResult.content,
-            finishReason: 'stop',
-            usage: retryResult.usage,
-          };
-        } else {
-          throw chatErr;
+        } catch (chatErr) {
+          const err = chatErr as Error & { statusCode?: number };
+          const is413 =
+            err.statusCode === 413 ||
+            (err.message &&
+              (err.message.includes('413') || err.message.includes('Entity Too Large')));
+          if (is413) {
+            logger.info('Chat request too large (413), retrying with summarized context', {
+              conversationId: session.id,
+            });
+            const retryResult = await this.retryWithSummarizedContext(
+              systemPrompt,
+              conversationHistory,
+              message,
+              modelId
+            );
+            groqResponse = {
+              id: retryResult.id,
+              content: retryResult.content,
+              finishReason: 'stop',
+              usage: retryResult.usage,
+            };
+          } else {
+            throw chatErr;
+          }
         }
       }
 
       let responseContent = groqResponse.content;
+      let safetyFallback = false;
+
+      streamCallbacks?.onProgress?.('safety_check');
 
       // Step 9: Apply safety guardrails
       const safetyCheck = safetyGuard.checkResponse(responseContent);
       if (!safetyCheck.isSafe) {
+        safetyFallback = true;
         logger.warn('Safety guard triggered, using fallback', {
           conversationId: session.id,
           correlationId: correlationId || undefined,
@@ -343,16 +429,27 @@ export class ChatOrchestrator {
         responseContent = safetyGuard.ensureRiskDisclaimer(responseContent, true);
       }
 
-      // Step 10: Parse structured sections from response
-      const sections = this.parseStructuredResponse(responseContent);
+      // Step 10: Parse structured sections from response (JSON when requested, else regex)
+      let sections: StructuredResponse;
+      let lowConfidence: boolean;
+      if (useJsonOutput) {
+        const parsed = this.parseStructuredResponseFromJson(responseContent);
+        if (parsed) {
+          sections = parsed.sections;
+          lowConfidence = parsed.low_confidence ?? this.detectLowConfidence(responseContent);
+        } else {
+          sections = this.parseStructuredResponse(responseContent);
+          lowConfidence = this.detectLowConfidence(responseContent);
+        }
+      } else {
+        sections = this.parseStructuredResponse(responseContent);
+        lowConfidence = this.detectLowConfidence(responseContent);
+      }
 
-      // Step 11: Detect low confidence (heuristic: check for uncertainty indicators)
-      const lowConfidence = this.detectLowConfidence(responseContent);
-
-      // Step 12: Save assistant message
+      // Step 11: Save assistant message
       await conversationStore.saveMessage(session.id, 'assistant', responseContent);
 
-      // Step 12.5: Audit log risk evaluation if risk context exists
+      // Step 11.5: Audit log risk evaluation if risk context exists
       if (riskContext && riskContext.riskEvaluation && correlationId) {
         try {
           // Sanitize risk evaluation request (remove sensitive data if any)
@@ -396,8 +493,8 @@ export class ChatOrchestrator {
         }
       }
 
-      // Step 13: Return structured response
-      return {
+      // Step 12: Return structured response
+      const result: ChatResponse = {
         conversationId: session.id,
         message: responseContent,
         sections,
@@ -406,7 +503,9 @@ export class ChatOrchestrator {
         user_level: intentResult.user_level,
         low_confidence: lowConfidence,
         response_id: groqResponse.id,
+        safety_fallback: safetyFallback,
       };
+      return result;
     } catch (error) {
       const err = error as Error & { statusCode?: number };
       const statusCode = err.statusCode;
@@ -416,7 +515,7 @@ export class ChatOrchestrator {
 
       if (isRequestTooLarge) {
         const friendlyMessage =
-          "This conversation or message is too long for me to process. Please try starting a new chat or shortening your message.";
+          'This conversation or message is too long for me to process. Please try starting a new chat or shortening your message.';
         const sid = conversationId ?? '';
         logger.warn('Chat request too large (413), returning friendly fallback', {
           conversationId: sid,
@@ -445,6 +544,7 @@ export class ChatOrchestrator {
           user_level: 'novice',
           low_confidence: false,
           response_id: '413_fallback',
+          safety_fallback: false,
         };
       }
 
@@ -453,7 +553,6 @@ export class ChatOrchestrator {
         userId,
         conversationId,
       });
-
       throw new Error(`Failed to process chat message: ${err.message}`);
     }
   }
@@ -465,13 +564,15 @@ export class ChatOrchestrator {
   private async retryWithSummarizedContext(
     systemPrompt: string,
     conversationHistory: GroqMessage[],
-    userMessage: string
+    userMessage: string,
+    modelId?: string
   ): Promise<{ id: string; content: string; usage?: GroqChatResponse['usage'] }> {
     const MAX_CONTEXT_FOR_SUMMARY = 28000;
 
     const contextToSummarize =
       systemPrompt.length > MAX_CONTEXT_FOR_SUMMARY
-        ? systemPrompt.slice(0, MAX_CONTEXT_FOR_SUMMARY) + '\n\n[... context truncated for summarization ...]'
+        ? systemPrompt.slice(0, MAX_CONTEXT_FOR_SUMMARY) +
+          '\n\n[... context truncated for summarization ...]'
         : systemPrompt;
 
     const summarizerInstruction = `You are a summarizer. Summarize the following context in under 400 words. Preserve: key numbers, sentiment direction and drivers, data quality flags, risk metrics, and any structured data. Output only the summary, no preamble or explanation.`;
@@ -483,16 +584,21 @@ export class ChatOrchestrator {
 
     let summary: string;
     try {
-      const summarizeResponse = await groqCompoundClient.completeChat({
+      const chatClient = getChatLLM(modelId);
+      const summarizeResponse = await chatClient.completeChat({
         messages: summarizeMessages,
+        modelId,
         maxTokens: 600,
         temperature: 0.3,
       });
       summary = summarizeResponse.content.trim();
     } catch (err) {
-      logger.warn('Summarize step failed (may also be too large), falling back to generic message', {
-        error: (err as Error).message,
-      });
+      logger.warn(
+        'Summarize step failed (may also be too large), falling back to generic message',
+        {
+          error: (err as Error).message,
+        }
+      );
       throw err;
     }
 
@@ -511,8 +617,10 @@ Respond to the user's message using the condensed context above. If the context 
       { role: 'user', content: userMessage },
     ];
 
-    const groqResponse = await groqCompoundClient.completeChat({
+    const chatClient = getChatLLM(modelId);
+    const groqResponse = await chatClient.completeChat({
       messages: retryMessages,
+      modelId,
       maxTokens: 2000,
       temperature: 0.7,
     });
@@ -540,7 +648,12 @@ Respond to the user's message using the condensed context above. If the context 
     const eligible = raw.filter((m) => m.role === 'user' || m.role === 'assistant');
     const trimmed = trimHistoryToTokenBudget(eligible, maxTokens);
 
-    if (trimmed.length <= summarizeWhenOver) {
+    const tokenThreshold =
+      env.CONVERSATION_SUMMARIZE_WHEN_TOKENS_OVER ?? Math.floor(maxTokens * 0.8);
+    const totalTokens = trimmed.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+    const overTokenThreshold = totalTokens > tokenThreshold;
+
+    if (trimmed.length <= summarizeWhenOver && !overTokenThreshold) {
       return { conversationHistory: trimmed, systemPromptPrefix: '' };
     }
 
@@ -572,7 +685,8 @@ Respond to the user's message using the condensed context above. If the context 
 
     const instruction = `Summarize this conversation in under 300 words. Preserve: topics discussed, key numbers, decisions, and open questions. Output only the summary.`;
 
-    const response = await groqCompoundClient.completeChat({
+    const chatClient = getChatLLM();
+    const response = await chatClient.completeChat({
       messages: [
         { role: 'system', content: instruction },
         { role: 'user', content: formatted },
@@ -582,6 +696,47 @@ Respond to the user's message using the condensed context above. If the context 
     });
 
     return response.content.trim();
+  }
+
+  /**
+   * Get market context for the message.
+   *
+   * Checks if market context is needed (message contains symbol/timeframe or any intent requires market context),
+   * then calls MarketContextService to fetch structured context.
+   *
+   * Returns undefined if context is not available or not needed.
+   */
+  private async buildChartContext(
+    userId: string,
+    message: string,
+    metadata: ChatRequest['metadata'],
+    sessionId: string
+  ): Promise<ChartContextForLLM | null> {
+    try {
+      const chartAnalysisService = new ChartAnalysisService(new GroqChartVisionProvider());
+      const chartContext = await chartAnalysisService.analyzeChart({
+        source: metadata?.chartId ? 'upload' : 'external_link',
+        chartId: metadata?.chartId as string | undefined,
+        symbolHint: metadata?.instrument as string | undefined,
+        timeframeHint: metadata?.timeframe as string | undefined,
+        userId,
+        rawQuery: message,
+      });
+      logger.debug('Chart context built', {
+        conversationId: sessionId,
+        chartId: chartContext.chartId,
+        symbol: chartContext.symbol,
+        patternsCount: chartContext.visionFeatures.patterns.length,
+      });
+      return chartContext;
+    } catch (error) {
+      logger.warn('Failed to build chart context', {
+        error: (error as Error).message,
+        conversationId: sessionId,
+        chartId: metadata?.chartId,
+      });
+      return null;
+    }
   }
 
   /**
@@ -614,6 +769,18 @@ Respond to the user's message using the condensed context above. If the context 
         return undefined;
       }
 
+      // Optional: return cached market context when symbol is known and user didn't ask for "latest"
+      if (metadata?.instrument && !ContextCache.shouldSkipCache(message, metadata)) {
+        const cached = contextCache.getMarket(metadata.instrument, metadata.timeframe);
+        if (cached !== undefined) {
+          logger.debug('Market context from cache', { symbol: metadata.instrument });
+          return {
+            context: cached.context,
+            available: cached.contextAvailable,
+          };
+        }
+      }
+
       // Build market context request
       const request = {
         userId: undefined, // Can be added if needed
@@ -626,6 +793,9 @@ Respond to the user's message using the condensed context above. If the context 
       const result = await marketContextService.getContext(request);
 
       if (result.contextAvailable && result.context) {
+        if (!ContextCache.shouldSkipCache(message, metadata)) {
+          contextCache.setMarket(result.context.instrument.symbol, request.timeframeHint, result);
+        }
         logger.debug('Market context retrieved', {
           symbol: result.context.instrument.symbol,
           assetClass: result.context.instrument.assetClass,
@@ -686,8 +856,43 @@ Respond to the user's message using the condensed context above. If the context 
   }
 
   /**
+   * Try to parse response as JSON with facts, interpretation, risk_and_uncertainty.
+   * Returns null if parse fails or required keys are missing.
+   */
+  private parseStructuredResponseFromJson(
+    content: string
+  ): { sections: StructuredResponse; low_confidence: boolean } | null {
+    const trimmed = content.trim();
+    let parsed: Record<string, unknown>;
+    try {
+      const firstBrace = trimmed.indexOf('{');
+      const lastBrace = trimmed.lastIndexOf('}');
+      if (firstBrace === -1 || lastBrace <= firstBrace) return null;
+      parsed = JSON.parse(trimmed.slice(firstBrace, lastBrace + 1)) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+    if (
+      !parsed ||
+      typeof parsed.facts !== 'string' ||
+      typeof parsed.interpretation !== 'string' ||
+      typeof parsed.risk_and_uncertainty !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      sections: {
+        facts: String(parsed.facts).trim(),
+        interpretation: String(parsed.interpretation).trim(),
+        risk_and_uncertainty: String(parsed.risk_and_uncertainty).trim(),
+      },
+      low_confidence: parsed.low_confidence === true,
+    };
+  }
+
+  /**
    * Parse structured response into Facts, Interpretation, and Risk & Uncertainty sections.
-   * Handles various formats the model might use.
+   * Handles various formats the model might use. When sections are missing, uses full content for interpretation.
    */
   private parseStructuredResponse(content: string): StructuredResponse {
     // Try to extract sections using common patterns
@@ -702,18 +907,23 @@ Respond to the user's message using the condensed context above. If the context 
       content.match(/Risk\s*[&\s]*Uncertainty:?\s*\n([\s\S]*?)$/i) ||
       content.match(/\*\*Risk\*\*:?\s*\n([\s\S]*?)$/i);
 
-    const facts = factsMatch ? factsMatch[1].trim() : 'Market information and context.';
-    const interpretation = interpretationMatch
-      ? interpretationMatch[1].trim()
-      : 'Analysis and interpretation of the available information.';
-    const risk_and_uncertainty = riskMatch
-      ? riskMatch[1].trim()
-      : 'Consider the inherent risks and uncertainties in trading. Markets are unpredictable, and no strategy guarantees success.';
+    const facts = factsMatch ? factsMatch[1].trim() : '';
+    const interpretation = interpretationMatch ? interpretationMatch[1].trim() : '';
+    const risk_and_uncertainty = riskMatch ? riskMatch[1].trim() : '';
+
+    // Fallback: when sections are missing, put full content into interpretation so UI shows something accurate
+    const fullContent = content.trim();
+    const defaultFacts = facts || 'Market information and context.';
+    const defaultInterpretation =
+      interpretation || fullContent || 'Analysis and interpretation of the available information.';
+    const defaultRisk =
+      risk_and_uncertainty ||
+      'Consider the inherent risks and uncertainties in trading. Markets are unpredictable, and no strategy guarantees success.';
 
     return {
-      facts,
-      interpretation,
-      risk_and_uncertainty,
+      facts: defaultFacts,
+      interpretation: defaultInterpretation,
+      risk_and_uncertainty: defaultRisk,
     };
   }
 

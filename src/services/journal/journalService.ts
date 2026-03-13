@@ -1,10 +1,7 @@
 import { JournalEntry } from '../../db/models/JournalEntry.js';
 import { MetaApiAccount } from '../../db/models/MetaApiAccount.js';
 import { getUserProfileMetrics } from '../profile/profileService.js';
-import {
-  getHistoryDealsByTimeRange,
-  getOpenPositions,
-} from '../brokers/metaapi.js';
+import { getHistoryDealsByTimeRange, getOpenPositions } from '../brokers/metaapi.js';
 import {
   mapMetaApiDealPairToAnalyzable,
   computeWinRate,
@@ -39,10 +36,7 @@ const DEFAULT_CONFIG = {
 
 /** In-memory cache for getTradesForWindow (MetaAPI). TTL 60s; source of truth remains MetaAPI. */
 const TRADES_CACHE_TTL_MS = 60_000;
-const tradesCache = new Map<
-  string,
-  { trades: AnalyzableTrade[]; expiresAt: number }
->();
+const tradesCache = new Map<string, { trades: AnalyzableTrade[]; expiresAt: number }>();
 
 function getTradesCacheKey(userId: string, from: Date, to: Date): string {
   return `trades:${userId}:${from.getTime()}:${to.getTime()}`;
@@ -69,16 +63,10 @@ function reconstructTradesFromMetaApiDeals(
     if (!byPosition.has(posId)) byPosition.set(posId, {});
     const slot = byPosition.get(posId)!;
     if (entryTypes.includes(deal.entryType ?? '')) {
-      if (
-        !slot.entry ||
-        (deal.time && slot.entry.time && deal.time < slot.entry.time)
-      )
+      if (!slot.entry || (deal.time && slot.entry.time && deal.time < slot.entry.time))
         slot.entry = deal;
     } else if (exitTypes.includes(deal.entryType ?? '')) {
-      if (
-        !slot.exit ||
-        (deal.time && slot.exit.time && deal.time > slot.exit.time)
-      )
+      if (!slot.exit || (deal.time && slot.exit.time && deal.time > slot.exit.time))
         slot.exit = deal;
     }
   }
@@ -154,9 +142,7 @@ export class JournalService {
     const { userId, from, to, maxTrades = 2000 } = req;
     const now = new Date();
     const windowTo = to || now;
-    const windowFrom =
-      from ||
-      new Date(windowTo.getTime() - 730 * 24 * 60 * 60 * 1000); // ~2 years
+    const windowFrom = from || new Date(windowTo.getTime() - 730 * 24 * 60 * 60 * 1000); // ~2 years
 
     const cacheKey = getTradesCacheKey(userId, windowFrom, windowTo);
     const cached = tradesCache.get(cacheKey);
@@ -389,8 +375,12 @@ export class JournalService {
     // Dashboard-style performance
     const winners = analyzableTrades.filter((t) => t.realizedPnlUsd > 0);
     const losers = analyzableTrades.filter((t) => t.realizedPnlUsd < 0);
-    const avgWin = winners.length > 0 ? winners.reduce((s, t) => s + t.realizedPnlUsd, 0) / winners.length : null;
-    const avgLoss = losers.length > 0 ? losers.reduce((s, t) => s + t.realizedPnlUsd, 0) / losers.length : null;
+    const avgWin =
+      winners.length > 0
+        ? winners.reduce((s, t) => s + t.realizedPnlUsd, 0) / winners.length
+        : null;
+    const avgLoss =
+      losers.length > 0 ? losers.reduce((s, t) => s + t.realizedPnlUsd, 0) / losers.length : null;
     const pnls = analyzableTrades.map((t) => t.realizedPnlUsd);
     const bestTrade = pnls.length > 0 ? Math.max(...pnls) : null;
     const worstTrade = pnls.length > 0 ? Math.min(...pnls) : null;

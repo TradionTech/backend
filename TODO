@@ -1,0 +1,2 @@
+Monitor gate for attaching redis streaming to the same process
+When on paid plan use seprate background worker for streaming services with npm run streaming:run

@@ -1,4 +1,5 @@
-import { groqCompoundClient } from '../ai/groqCompoundClient';
+import { getChatLLM } from '../ai/llm/chatLLM';
+import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import type { MarketContextRequest } from '../../types/market';
 import { mapTimeframeHint } from './timeframeMapper';
@@ -98,7 +99,8 @@ Only include fields that are actually found in the message. Use null for missing
     const userMessage = `User message: ${message}\n\nExtract trading symbol, timeframe hint, and asset class if mentioned.`;
 
     try {
-      const response = await groqCompoundClient.completeChat({
+      const chatClient = getChatLLM(env.GROQ_MODEL ?? 'groq/compound');
+      const response = await chatClient.completeChat({
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage },

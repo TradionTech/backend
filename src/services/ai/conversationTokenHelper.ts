@@ -1,15 +1,38 @@
 import type { GroqMessage } from './groqCompoundClient';
+import { env } from '../../config/env';
 
-/** Approximate chars per token (conservative for English/mixed content). */
-const CHARS_PER_TOKEN = 4;
+/** Lazy-loaded tokenizer (gpt-tokenizer). Used for accurate token counts; falls back to char estimate if unavailable. */
+let tokenizerModule: { encode: (text: string) => number[] } | undefined | null = null;
+
+function getTokenizer(): { encode: (text: string) => number[] } | undefined {
+  if (tokenizerModule === null) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      tokenizerModule = require('gpt-tokenizer') as { encode: (text: string) => number[] };
+    } catch {
+      tokenizerModule = undefined;
+    }
+  }
+  return tokenizerModule ?? undefined;
+}
 
 /**
- * Estimate token count for a string using a simple heuristic.
- * Uses ~4 chars per token; no external tokenizer.
+ * Estimate token count for a string.
+ * Uses gpt-tokenizer when available (OpenAI/Groq-style BPE); otherwise falls back to char-based heuristic
+ * using CONVERSATION_CHARS_PER_TOKEN (default 4).
  */
 export function estimateTokens(text: string): number {
   if (!text || text.length === 0) return 0;
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
+  const t = getTokenizer();
+  if (t) {
+    try {
+      return t.encode(text).length;
+    } catch {
+      // Fall through to char-based
+    }
+  }
+  const charsPerToken = env.CONVERSATION_CHARS_PER_TOKEN ?? 4;
+  return Math.ceil(text.length / charsPerToken);
 }
 
 /**

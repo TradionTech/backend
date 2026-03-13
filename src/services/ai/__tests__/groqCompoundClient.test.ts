@@ -6,6 +6,7 @@ jest.mock('axios');
 jest.mock('../../../config/env', () => ({
   env: {
     GROQ_API_KEY: 'test-api-key',
+    GROQ_MODEL: 'groq/compound',
     GROQ_TIMEOUT: 30000,
     GROQ_TEMPERATURE: 0.7,
     GROQ_MAX_TOKENS: 2000,
@@ -79,6 +80,31 @@ describe('GroqCompoundClient', () => {
       });
     });
 
+    it('should use options.modelId when provided', async () => {
+      const mockResponse = {
+        data: {
+          id: 'chatcmpl-456',
+          choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }],
+        },
+      };
+      mockedAxios.post.mockResolvedValueOnce(mockResponse);
+
+      await client.completeChat({
+        messages: [{ role: 'user', content: 'Test' }],
+        modelId: 'groq/llama-3.1-70b-versatile',
+      });
+
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          model: 'groq/llama-3.1-70b-versatile',
+        }),
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe('completeChat tools and errors', () => {
     it('should include compound_custom.tools.enabled_tools when tools are provided', async () => {
       const mockResponse = {
         data: {

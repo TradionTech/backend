@@ -20,11 +20,4 @@ export const marketData = {
     });
     return data;
   },
-  async getEconomicCalendar(params: { from: string; to: string }) {
-    const { data } = await client.get('/calendar/economic', {
-      headers: { 'x-api-key': env.MARKET_API_KEY },
-      params,
-    });
-    return data;
-  },
 };

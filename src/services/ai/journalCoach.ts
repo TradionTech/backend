@@ -1,6 +1,7 @@
 import { journalService } from '../journal/journalService.js';
 import { promptBuilder } from './promptBuilder.js';
-import { groqCompoundClient, type GroqMessage } from './groqCompoundClient.js';
+import { getChatLLM } from './llm/chatLLM.js';
+import type { GroqMessage } from './groqCompoundClient.js';
 import { conversationStore } from './conversationStore.js';
 import { trimHistoryToTokenBudget } from './conversationTokenHelper.js';
 import { env } from '../../config/env.js';
@@ -101,14 +102,15 @@ export class JournalCoach {
       // Build messages for Groq
       const messages = promptBuilder.buildMessages(systemPrompt, conversationHistory, message);
 
-      // Call Groq Compound
+      // Call chat LLM (default model)
       logger.debug('Calling Groq Compound for journal coaching', {
         userId,
         coachingIntent,
         tradeCount: journalContext.window.tradeCount,
       });
 
-      const groqResponse = await groqCompoundClient.completeChat({
+      const chatClient = getChatLLM(env.GROQ_MODEL ?? 'groq/compound');
+      const groqResponse = await chatClient.completeChat({
         messages,
         allowedTools: [], // No tools needed for coaching
         maxTokens: 2000,

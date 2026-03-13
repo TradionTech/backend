@@ -1,6 +1,7 @@
 import type { GroqMessage } from './groqCompoundClient';
 import type { MarketContext } from '../../types/market';
 import type { JournalContextForLLM, CoachingIntent } from '../journal/journalTypes';
+import type { EconomicCalendarContextForLLM } from '../economicCalendar/economicCalendarTypes';
 
 export type UserLevel = 'novice' | 'intermediate' | 'advanced';
 export type Intent =
@@ -26,6 +27,9 @@ export interface PromptContext {
   riskContext?: import('../risk/riskOrchestrator').RiskContextForLLM | null;
   chartContext?: import('../chart/chartTypes').ChartContextForLLM | null;
   sentimentContext?: import('../sentiment/sentimentTypes').SentimentContextForLLM | null;
+  economicCalendarContext?: EconomicCalendarContextForLLM | null;
+  /** When true, prompt asks for JSON output (facts, interpretation, risk_and_uncertainty, optional low_confidence). */
+  useJsonOutput?: boolean;
 }
 
 /**
@@ -45,6 +49,8 @@ export class PromptBuilder {
       riskContext,
       chartContext,
       sentimentContext,
+      economicCalendarContext,
+      useJsonOutput = false,
     } = context;
 
     // Check if ANY intent is risk-related
@@ -63,6 +69,7 @@ export class PromptBuilder {
         intent: primaryIntent,
         marketContext,
         riskContext,
+        economicCalendarContext,
       });
     }
 
@@ -74,6 +81,7 @@ export class PromptBuilder {
         primaryIntent,
         marketContext,
         chartContext,
+        economicCalendarContext,
       });
     }
 
@@ -85,17 +93,21 @@ export class PromptBuilder {
         primaryIntent,
         marketContext,
         sentimentContext,
+        economicCalendarContext,
       });
     }
 
     // Standard prompt for non-risk intents
     const safetyRules = this.getSafetyRules();
-    const responseStructure = this.getResponseStructure();
+    const responseStructure = useJsonOutput
+      ? this.getResponseStructureJson()
+      : this.getResponseStructure();
     const toneGuidance = this.getToneGuidance(userLevel, intents, primaryIntent);
     const marketContextSection = this.buildMarketContextSection(marketContext);
     const intentGuidance = this.getMultiIntentGuidance(intents, primaryIntent);
+    const economicCalendarSection = this.buildEconomicCalendarSection(economicCalendarContext);
 
-    return `You are TradionAI, an expert trading education and analysis assistant. Your role is to help traders learn, analyze, and make informed decisions while maintaining strict safety boundaries.
+    return `You are TradionAI, a supportive trading companion and expert education assistant. Your role is to help traders at every level learn, analyze, and make informed decisions while maintaining strict safety boundaries. Be encouraging and suggest natural next steps or follow-up questions when relevant.
 
 ${safetyRules}
 
@@ -106,6 +118,10 @@ ${toneGuidance}
 ${intentGuidance}
 
 ${marketContextSection}
+
+${economicCalendarSection}
+
+COMPANION STYLE: When appropriate, offer one optional follow-up or "You might also ask..." to support continued learning. Keep it brief and relevant; do not be pushy.
 
 Remember: Your goal is education and analysis, not providing personalized financial advice or definitive predictions. Always prioritize user safety and learning.`;
   }
@@ -184,6 +200,21 @@ Format your response clearly with these three section headers. Be concise but th
   }
 
   /**
+   * Response structure when JSON output is requested (for parsing).
+   */
+  private getResponseStructureJson(): string {
+    return `RESPONSE FORMAT (REQUIRED - JSON):
+
+You MUST respond with a valid JSON object only. No markdown, no code fence, no extra text. The object must have these keys:
+- "facts" (string): Verifiable information, current market context (if available), definitions. What is known and can be confirmed.
+- "interpretation" (string): What these facts might mean, possible scenarios, analysis of potential implications.
+- "risk_and_uncertainty" (string): Probabilities and scenarios (not certainties), caveats, limitations, what could go wrong.
+- "low_confidence" (boolean, optional): Set to true when you are uncertain, lack data, or the answer is tentative.
+
+Example shape: {"facts":"...","interpretation":"...","risk_and_uncertainty":"...","low_confidence":false}`;
+  }
+
+  /**
    * Tone and style guidance based on user level and intents.
    */
   private getToneGuidance(userLevel: UserLevel, intents: Intent[], primaryIntent: Intent): string {
@@ -193,11 +224,12 @@ Format your response clearly with these three section headers. Be concise but th
     if (userLevel === 'novice') {
       guidance += `USER LEVEL: NOVICE
 - Provide step-by-step explanations
-- Define trading terms and concepts
+- Define trading terms and concepts on first use in the conversation when helpful
 - Use simple, clear language
 - Break down complex ideas into digestible parts
 - Offer context for why things matter
-- Be patient and educational\n\n`;
+- Be patient and educational
+- When it fits the question, optionally end with one "What you could do next" or "You might also ask..." suggestion (e.g. "You might also ask about risk per trade for this setup")\n\n`;
     } else if (userLevel === 'advanced') {
       guidance += `USER LEVEL: ADVANCED
 - Assume familiarity with trading concepts
@@ -293,6 +325,13 @@ Structure your response to comprehensively address each intent while maintaining
     }
 
     const sections: string[] = [];
+    const dq = marketContext.dataQuality;
+    if (!dq.isFresh) {
+      const ageMinutes = dq.ageSeconds !== undefined ? Math.floor(dq.ageSeconds / 60) : 0;
+      sections.push(
+        `\n\n⚠️ DATA IS STALE (age ${ageMinutes} minutes). Do not state current price as exact; say data may be outdated.\n`
+      );
+    }
     sections.push('\n\n=== CURRENT MARKET CONTEXT ===');
 
     // Instrument info
@@ -342,8 +381,7 @@ Structure your response to comprehensively address each intent while maintaining
       }
     }
 
-    // Data quality
-    const dq = marketContext.dataQuality;
+    // Data quality (dq already declared above when building stale warning)
     sections.push(`\nData Quality:`);
     sections.push(`  Source: ${dq.source}`);
     sections.push(`  Fresh: ${dq.isFresh ? 'Yes' : 'No'}`);
@@ -384,6 +422,41 @@ Structure your response to comprehensively address each intent while maintaining
   }
 
   /**
+   * Build economic calendar section for system prompt.
+   * When absent or no events, returns a single line so chat does not invent events.
+   */
+  private buildEconomicCalendarSection(
+    calendarContext?: EconomicCalendarContextForLLM | null
+  ): string {
+    if (!calendarContext || !calendarContext.events?.length) {
+      return '\n\nEconomic calendar data is not available. Do not invent or guess upcoming events.';
+    }
+
+    const sections: string[] = [];
+    sections.push('\n\n=== BACKEND_ECONOMIC_CALENDAR ===');
+    sections.push(`Window: ${calendarContext.window.from} to ${calendarContext.window.to}`);
+    sections.push(`Events (${calendarContext.events.length}):`);
+    for (const e of calendarContext.events) {
+      const parts = [
+        `${e.dateUtc.slice(0, 16)}`,
+        e.name,
+        `${e.countryCode}/${e.currencyCode}`,
+        `volatility: ${e.volatility}`,
+      ];
+      if (e.actual != null) parts.push(`actual: ${e.actual}`);
+      if (e.consensus != null) parts.push(`consensus: ${e.consensus}`);
+      if (e.previous != null) parts.push(`previous: ${e.previous}`);
+      if (e.unit) parts.push(`unit: ${e.unit}`);
+      sections.push(`  - ${parts.join(' | ')}`);
+    }
+    sections.push(
+      '\nUse this data only for context. Do not invent events. When summarizing, prefer high-volatility events.'
+    );
+    sections.push('=== END BACKEND_ECONOMIC_CALENDAR ===');
+    return sections.join('\n');
+  }
+
+  /**
    * Build risk-specific system prompt for risk-related conversations.
    * Includes numeric truth contract and structured risk context.
    */
@@ -392,8 +465,9 @@ Structure your response to comprehensively address each intent while maintaining
     intent: Intent;
     marketContext?: MarketContext;
     riskContext: import('../risk/riskOrchestrator').RiskContextForLLM;
+    economicCalendarContext?: EconomicCalendarContextForLLM | null;
   }): string {
-    const { userLevel, intent, marketContext, riskContext } = args;
+    const { userLevel, intent, marketContext, riskContext, economicCalendarContext } = args;
 
     const rolesAndBoundaries = this.getRiskRolesAndBoundaries();
     const numericTruthContract = this.getNumericTruthContract();
@@ -402,8 +476,9 @@ Structure your response to comprehensively address each intent while maintaining
     // Convert single intent to array format for getToneGuidance
     const toneGuidance = this.getToneGuidance(userLevel, [intent], intent);
     const marketContextSection = this.buildMarketContextSection(marketContext);
+    const economicCalendarSection = this.buildEconomicCalendarSection(economicCalendarContext);
 
-    return `You are TradionAI, a trading risk assistant. Your role is to explain risk and money management using the numerical results and policy flags provided.
+    return `You are TradionAI, a supportive trading companion and trading risk assistant. Your role is to explain risk and money management using the numerical results and policy flags provided. Be encouraging and suggest natural next steps when relevant.
 
 ${rolesAndBoundaries}
 
@@ -417,7 +492,9 @@ ${toneGuidance}
 
 ${marketContextSection}
 
-Remember: All numeric values are authoritative and come from the risk engine and backend. You must treat these numbers as read-only facts. Never invent or adjust numeric values.`;
+${economicCalendarSection}
+
+Remember: All numeric values are authoritative and come from the risk engine and backend. You must treat these numbers as read-only facts. Never invent or adjust numeric values. When appropriate, offer one brief "You might also ask..." suggestion.`;
   }
 
   /**
@@ -612,16 +689,18 @@ An error occurred while building risk context. Please inform the user that risk 
     primaryIntent: Intent;
     marketContext?: MarketContext;
     chartContext: import('../chart/chartTypes').ChartContextForLLM;
+    economicCalendarContext?: EconomicCalendarContextForLLM | null;
   }): string {
-    const { userLevel, intents, primaryIntent, marketContext, chartContext } = args;
+    const { userLevel, intents, primaryIntent, marketContext, chartContext, economicCalendarContext } = args;
 
     const safetyRules = this.getSafetyRules();
     const toneGuidance = this.getToneGuidance(userLevel, intents, primaryIntent);
     const marketContextSection = this.buildMarketContextSection(marketContext);
     const chartContextBlock = this.buildChartContextBlock(chartContext);
     const intentGuidance = this.getMultiIntentGuidance(intents, primaryIntent);
+    const economicCalendarSection = this.buildEconomicCalendarSection(economicCalendarContext);
 
-    return `You are TradionAI, a trading chart analysis assistant. Your role is to analyze trading charts using the structured BACKEND_CHART_CONTEXT provided. You do NOT see the raw image - you only have access to the structured analysis results.
+    return `You are TradionAI, a supportive trading companion and trading chart analysis assistant. Your role is to analyze trading charts using the structured BACKEND_CHART_CONTEXT provided. You do NOT see the raw image - you only have access to the structured analysis results. Be encouraging and suggest natural next steps when relevant.
 
 ${safetyRules}
 
@@ -640,6 +719,8 @@ ${toneGuidance}
 ${intentGuidance}
 
 ${marketContextSection}
+
+${economicCalendarSection}
 
 RESPONSE STRUCTURE (REQUIRED):
 
@@ -672,7 +753,7 @@ You MUST structure your chart analysis response into five clear sections:
    - Limitations of the analysis
    - What additional information would help
 
-Remember: Always respect the uncertainty flags and pattern confidences provided in BACKEND_CHART_CONTEXT. If confidence is low, explicitly state that in your analysis.`;
+Remember: Always respect the uncertainty flags and pattern confidences provided in BACKEND_CHART_CONTEXT. If confidence is low, explicitly state that in your analysis. When appropriate, offer one brief "You might also ask..." suggestion.`;
   }
 
   /**
@@ -1099,16 +1180,18 @@ Remember: Always respect the data quality flags. If there are insufficient trade
     primaryIntent: Intent;
     marketContext?: MarketContext;
     sentimentContext: import('../sentiment/sentimentTypes').SentimentContextForLLM;
+    economicCalendarContext?: EconomicCalendarContextForLLM | null;
   }): string {
-    const { userLevel, intents, primaryIntent, marketContext, sentimentContext } = args;
+    const { userLevel, intents, primaryIntent, marketContext, sentimentContext, economicCalendarContext } = args;
 
     const safetyRules = this.getSafetyRules();
     const toneGuidance = this.getToneGuidance(userLevel, intents, primaryIntent);
     const marketContextSection = this.buildMarketContextSection(marketContext);
     const sentimentContextBlock = this.buildSentimentContextBlock(sentimentContext);
     const intentGuidance = this.getMultiIntentGuidance(intents, primaryIntent);
+    const economicCalendarSection = this.buildEconomicCalendarSection(economicCalendarContext);
 
-    return `You are TradionAI, a market sentiment explainer. Your role is to summarize and contextualize numeric sentiment scores and drivers. You DO NOT give direct trade recommendations or guaranteed predictions. You emphasize that sentiment is context, not a trading signal by itself.
+    return `You are TradionAI, a supportive trading companion and market sentiment explainer. Your role is to summarize and contextualize numeric sentiment scores and drivers. You DO NOT give direct trade recommendations or guaranteed predictions. You emphasize that sentiment is context, not a trading signal by itself. Be encouraging and suggest natural next steps when relevant.
 
 ${safetyRules}
 
@@ -1134,6 +1217,8 @@ ${toneGuidance}
 ${intentGuidance}
 
 ${marketContextSection}
+
+${economicCalendarSection}
 
 RESPONSE STRUCTURE (REQUIRED):
 
@@ -1169,7 +1254,7 @@ Additional formatting rules for sentiment drivers:
    - Remind that sentiment is one factor among many
    - No direct trade advice
 
-Remember: Always respect the data quality flags. If confidence is low or data is sparse/stale, explicitly state this in your response. Never fabricate sentiment scores or drivers not present in the BACKEND_SENTIMENT_CONTEXT.`;
+Remember: Always respect the data quality flags. If confidence is low or data is sparse/stale, explicitly state this in your response. Never fabricate sentiment scores or drivers not present in the BACKEND_SENTIMENT_CONTEXT. When appropriate, offer one brief "You might also ask..." suggestion.`;
   }
 
   /**

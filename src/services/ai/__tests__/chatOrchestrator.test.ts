@@ -52,6 +52,9 @@ Trading carries risk and markets are unpredictable.`;
         primaryIntent: 'education',
         user_level: 'intermediate',
         isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
       });
       mockedGroqClient.completeChat.mockResolvedValueOnce({
         id: 'response-123',
@@ -86,8 +89,13 @@ Trading carries risk and markets are unpredictable.`;
       );
       mockedConversationStore.getRecentMessages.mockResolvedValueOnce(history);
       mockedIntentDetector.detectIntent.mockResolvedValueOnce({
-        intent: 'clarification',
+        intents: [{ intent: 'clarification', confidence: 0.9 }],
+        primaryIntent: 'clarification',
         user_level: 'novice',
+        isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
       });
       mockedGroqClient.completeChat.mockResolvedValueOnce({
         id: 'response-123',
@@ -121,8 +129,13 @@ Trading carries risk and markets are unpredictable.`;
       );
       mockedConversationStore.getRecentMessages.mockResolvedValueOnce([]);
       mockedIntentDetector.detectIntent.mockResolvedValueOnce({
-        intent: 'analysis',
+        intents: [{ intent: 'analysis', confidence: 0.9 }],
+        primaryIntent: 'analysis',
         user_level: 'advanced',
+        isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
       });
       mockedGroqClient.completeChat.mockResolvedValueOnce({
         id: 'response-123',
@@ -160,6 +173,9 @@ Confidence is low. Missing critical information.`;
         primaryIntent: 'education',
         user_level: 'intermediate',
         isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
       });
       mockedGroqClient.completeChat.mockResolvedValueOnce({
         id: 'response-123',
@@ -204,8 +220,13 @@ Trading risks.`;
       );
       mockedConversationStore.getRecentMessages.mockResolvedValueOnce([]);
       mockedIntentDetector.detectIntent.mockResolvedValueOnce({
-        intent: 'analysis',
+        intents: [{ intent: 'analysis', confidence: 0.9 }],
+        primaryIntent: 'analysis',
         user_level: 'intermediate',
+        isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
       });
       mockedMarketContextService.getContext.mockResolvedValueOnce({
         contextAvailable: true,
@@ -257,8 +278,13 @@ Trading risks.`;
       );
       mockedConversationStore.getRecentMessages.mockResolvedValueOnce([]);
       mockedIntentDetector.detectIntent.mockResolvedValueOnce({
-        intent: 'analysis',
+        intents: [{ intent: 'analysis', confidence: 0.9 }],
+        primaryIntent: 'analysis',
         user_level: 'intermediate',
+        isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
       });
       mockedMarketContextService.getContext.mockResolvedValueOnce({
         contextAvailable: false,
@@ -291,8 +317,13 @@ Trading risks.`;
       );
       mockedConversationStore.getRecentMessages.mockResolvedValueOnce([]);
       mockedIntentDetector.detectIntent.mockResolvedValueOnce({
-        intent: 'analysis',
+        intents: [{ intent: 'analysis', confidence: 0.9 }],
+        primaryIntent: 'analysis',
         user_level: 'intermediate',
+        isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
       });
       mockedMarketContextService.getContext.mockResolvedValueOnce({
         contextAvailable: true,

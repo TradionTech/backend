@@ -15,3 +15,9 @@ const httpServer = app.listen(port, () => {
 attachPriceWebSocket(httpServer);
 attachAccountWebSocket(httpServer);
 attachStreamingInProcess();
+
+if (env.ENABLE_JOBS) {
+  void import('./jobs/scheduler').catch((err) => {
+    logger.error('Failed to start jobs scheduler', { err: (err as Error)?.message });
+  });
+}

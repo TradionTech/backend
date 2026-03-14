@@ -85,6 +85,13 @@ function buildListener(metaapiAccountId: string): SynchronizationListener {
   };
 }
 
+const STREAMING_CONNECT_MAX_RETRIES = 3;
+const STREAMING_CONNECT_RETRY_DELAY_MS = 3000;
+
+/**
+ * MetaAPI can emit "Failed to subscribe TimeoutError" when the broker connection is briefly lost.
+ * This is expected occasionally (MT terminal uptime is not perfect). We retry connect/sync to smooth over it.
+ */
 async function openConnection(metaapiAccountId: string): Promise<ConnectionState | null> {
   if (connections.size >= env.METAAPI_STREAMING_MAX_CONNECTIONS) {
     logger.warn('Streaming connection cap reached', {
@@ -108,8 +115,32 @@ async function openConnection(metaapiAccountId: string): Promise<ConnectionState
     ? account.getStreamingConnection(historyStorage as any)
     : account.getStreamingConnection();
 
-  await connection.connect();
-  await connection.waitSynchronized();
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= STREAMING_CONNECT_MAX_RETRIES; attempt++) {
+    try {
+      await connection.connect();
+      await connection.waitSynchronized();
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      const isTimeout =
+        lastErr.name === 'TimeoutError' ||
+        /not connected to broker|does not match the account region/i.test(lastErr.message);
+      if (attempt < STREAMING_CONNECT_MAX_RETRIES && isTimeout) {
+        logger.warn('Streaming connect/sync timeout, retrying', {
+          metaapiAccountId,
+          attempt,
+          maxRetries: STREAMING_CONNECT_MAX_RETRIES,
+          err: lastErr.message,
+        });
+        await new Promise((r) => setTimeout(r, STREAMING_CONNECT_RETRY_DELAY_MS));
+      } else {
+        throw lastErr;
+      }
+    }
+  }
+  if (lastErr) throw lastErr;
 
   const listener = buildListener(metaapiAccountId);
   connection.addSynchronizationListener(listener);

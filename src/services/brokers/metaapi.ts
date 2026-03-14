@@ -48,6 +48,8 @@ export interface MetaApiProvisioningAccount {
   login?: string;
   server?: string;
   type?: string;
+  /** Platform: mt4 or mt5 (API may return MT4/MT5). */
+  platform?: string;
   [key: string]: unknown;
 }
 
@@ -327,6 +329,9 @@ export async function syncAccountStateToDb(metaapiAccountId: string): Promise<bo
     where: { metaapiAccountId },
   });
   if (!row) return false;
+  const platformRaw = provisioning.platform?.toString().toLowerCase();
+  const platform: 'mt4' | 'mt5' | null =
+    platformRaw === 'mt4' ? 'mt4' : platformRaw === 'mt5' ? 'mt5' : null;
   await row.update({
     state: provisioning.state ?? null,
     connectionStatus: provisioning.connectionStatus ?? null,
@@ -335,6 +340,7 @@ export async function syncAccountStateToDb(metaapiAccountId: string): Promise<bo
     login: provisioning.login ?? null,
     server: provisioning.server ?? null,
     accountType: provisioning.type ?? null,
+    platform: platform ?? row.platform,
   });
   return true;
 }

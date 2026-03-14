@@ -91,6 +91,8 @@ Run the streaming service as a separate process so real-time account updates wor
 
 **In-process mode (single Web Service):** If you run only one API instance (e.g. Render free plan without Background Workers), the streaming logic runs inside the API process automatically. Set `REDIS_URL` and `METAAPI_TOKEN`; the server subscribes to Redis and manages MetaAPI connections in-process. No separate `streaming:run` process needed. Use a separate Background Worker when you scale to multiple API instances. Set `STREAMING_IN_PROCESS=false` on the API when the worker runs streaming.
 
+**MetaAPI "Failed to subscribe TimeoutError":** The MetaAPI SDK can log this when the broker connection is briefly lost. MetaAPI states this is expected occasionally (MT terminal uptime is not perfect). The backend retries connect/sync up to 3 times with delay; if it still happens rarely, streaming usually continues to work. If it is frequent, check broker/MetaAPI account connectivity or contact MetaAPI support.
+
 ## API Documentation
 
 - Swagger UI is available at `http://localhost:8080/api/docs` once the server is running.

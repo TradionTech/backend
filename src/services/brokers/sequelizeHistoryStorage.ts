@@ -2,6 +2,10 @@
  * DB-backed HistoryStorage for MetaAPI streaming. Persists deals and orders to TradeHistory.
  * Resolves metaapiAccountId to internal accountId via MetaApiAccount. Uses in-memory cache for reads.
  * Cast as HistoryStorage when passing to getStreamingConnection().
+ *
+ * The SDK also registers this object as a SynchronizationListener and calls every callback for
+ * every event. We implement all listener methods as no-ops so "listener.x is not a function"
+ * errors do not occur; only deal/order merge and sync state are used.
  */
 
 import { Op } from 'sequelize';
@@ -111,6 +115,37 @@ export class SequelizeHistoryStorage {
     return this._ordersCache.length > 0 ? this._ordersCache : [];
   }
 
+  /** SDK uses this for incremental order sync. Must return a Date (SDK calls .getTime() on it). */
+  lastHistoryOrderTime(): Date {
+    if (this._ordersCache.length === 0) return new Date(0);
+    let latest: Date = new Date(0);
+    for (const o of this._ordersCache) {
+      const t = (o as { time?: string }).time;
+      if (!t) continue;
+      const d = new Date(t);
+      if (d.getTime() > latest.getTime()) latest = d;
+    }
+    return latest;
+  }
+
+  /** SDK may use for incremental deal sync. Must return a Date (SDK calls .getTime() on it). */
+  lastHistoryDealTime(): Date {
+    if (this._dealsCache.length === 0) return new Date(0);
+    let latest: Date = new Date(0);
+    for (const d of this._dealsCache) {
+      const t = (d as { time?: string }).time;
+      if (!t) continue;
+      const date = new Date(t);
+      if (date.getTime() > latest.getTime()) latest = date;
+    }
+    return latest;
+  }
+
+  /** SDK calls this name (alias for lastHistoryDealTime). */
+  lastDealTime(): Date {
+    return this.lastHistoryDealTime();
+  }
+
   historyOrdersByTicket(ticket: string): Record<string, unknown>[] {
     return this.historyOrders.filter((o) => String((o as { id?: string }).id) === ticket);
   }
@@ -126,6 +161,14 @@ export class SequelizeHistoryStorage {
       const date = new Date(t);
       return date >= start && date <= end;
     });
+  }
+
+  /**
+   * Called by MetaAPI SDK when the streaming connection uses this storage.
+   * Loads existing deals/orders from DB into cache.
+   */
+  initialize(): Promise<void> {
+    return this.loadFromDb();
   }
 
   /** Load deals/orders from DB into cache. Call before or after sync. */
@@ -199,6 +242,28 @@ export class SequelizeHistoryStorage {
       }
     })();
   }
+
+  // --- SynchronizationListener no-ops (SDK registers this object as a listener and calls every callback) ---
+  onConnected(): void {}
+  onSynchronizationStarted(_instanceIndex?: string): void {}
+  onBrokerConnectionStatusChanged(_instanceIndex: string, _connected: boolean): void {}
+  onHealthStatus(_instanceIndex: string, _status: unknown): void {}
+  onSymbolSpecificationUpdated(_instanceIndex: string, _specification?: unknown): void {}
+  onSymbolSpecificationsUpdated(_instanceIndex: string, _specifications?: unknown): void {}
+  onAccountInformationUpdated(_instanceIndex: string, _accountInformation: unknown): void {}
+  onPositionsReplaced(_instanceIndex: string, _positions: unknown[]): void {}
+  onPositionsSynchronized(_instanceIndex: string, _synchronizationId?: string): void {}
+  onPositionUpdated(_instanceIndex: string, _position: unknown): void {}
+  onPositionRemoved(_instanceIndex: string, _positionId: string): void {}
+  onPendingOrdersReplaced(_instanceIndex: string, _orders: unknown[]): void {}
+  onPendingOrdersSynchronized(_instanceIndex: string, _synchronizationId?: string): void {}
+  onOrderUpdated(_instanceIndex: string, _order: unknown): void {}
+  onOrderCompleted(_instanceIndex: string, _order: unknown): void {}
+  onOrderSynchronizationFinished(_instanceIndex: string, _synchronizationId: string): void {}
+  onHistoryOrdersSynchronized(_instanceIndex?: string, _synchronizationId?: string): void {}
+  onDealSynchronizationFinished(_instanceIndex: string, _synchronizationId: string): void {}
+  onDealsSynchronized(_instanceIndex?: string, _synchronizationId?: string): void {}
+  onDealAdded(_instanceIndex: string, _deal: unknown): void {}
 }
 
 /** Create HistoryStorage for a MetaAPI account. Resolves metaapiAccountId to internal accountId. */

@@ -35,15 +35,33 @@ function getPublisher(): Redis | null {
 
 function buildListener(metaapiAccountId: string): SynchronizationListener {
   return {
+    onConnected() {},
+    onSynchronizationStarted() {},
+    onBrokerConnectionStatusChanged() {},
+    onHealthStatus() {},
+    onSymbolSpecificationUpdated() {},
+    onSymbolSpecificationsUpdated() {},
     onAccountInformationUpdated(_instanceIndex: string, accountInformation: unknown) {
       const pub = getPublisher();
       if (!pub) return;
-      const payload: AccountUpdatePayload = {
+      publishAccountUpdate(pub, {
         type: 'account_info',
         accountId: metaapiAccountId,
         data: (accountInformation as Record<string, unknown>) ?? {},
-      };
-      publishAccountUpdate(pub, payload);
+      });
+    },
+    onPositionsReplaced(_instanceIndex: string, positions: unknown) {
+      const pub = getPublisher();
+      if (!pub) return;
+      publishAccountUpdate(pub, {
+        type: 'positions',
+        accountId: metaapiAccountId,
+        data: Array.isArray(positions) ? positions : [],
+      });
+    },
+    onPositionsSynchronized(_instanceIndex: string, _synchronizationId?: string) {
+      const pub = getPublisher();
+      if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
     },
     onPositionUpdated(_instanceIndex: string, position: unknown) {
       const pub = getPublisher();
@@ -59,6 +77,19 @@ function buildListener(metaapiAccountId: string): SynchronizationListener {
       if (!pub) return;
       publishAccountUpdate(pub, { type: 'positions', accountId: metaapiAccountId, data: [] });
     },
+    onPendingOrdersReplaced(_instanceIndex: string, orders: unknown) {
+      const pub = getPublisher();
+      if (!pub) return;
+      publishAccountUpdate(pub, {
+        type: 'orders',
+        accountId: metaapiAccountId,
+        data: Array.isArray(orders) ? orders : [],
+      });
+    },
+    onPendingOrdersSynchronized(_instanceIndex: string, _synchronizationId?: string) {
+      const pub = getPublisher();
+      if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
+    },
     onOrderUpdated(_instanceIndex: string, order: unknown) {
       const pub = getPublisher();
       if (!pub) return;
@@ -73,7 +104,15 @@ function buildListener(metaapiAccountId: string): SynchronizationListener {
       const pub = getPublisher();
       if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
     },
+    onHistoryOrdersSynchronized() {
+      const pub = getPublisher();
+      if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
+    },
     onDealSynchronizationFinished(_instanceIndex: string, _synchronizationId: string) {
+      const pub = getPublisher();
+      if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
+    },
+    onDealsSynchronized() {
       const pub = getPublisher();
       if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
     },
@@ -115,6 +154,9 @@ async function openConnection(metaapiAccountId: string): Promise<ConnectionState
     ? account.getStreamingConnection(historyStorage as any)
     : account.getStreamingConnection();
 
+  const listener = buildListener(metaapiAccountId);
+  connection.addSynchronizationListener(listener);
+
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= STREAMING_CONNECT_MAX_RETRIES; attempt++) {
     try {
@@ -141,9 +183,6 @@ async function openConnection(metaapiAccountId: string): Promise<ConnectionState
     }
   }
   if (lastErr) throw lastErr;
-
-  const listener = buildListener(metaapiAccountId);
-  connection.addSynchronizationListener(listener);
 
   const state: ConnectionState = {
     connection,

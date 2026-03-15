@@ -1,9 +1,10 @@
 /**
  * Account WebSocket server: /api/ws/account
  * Auth via Clerk token (query ?token= or Authorization header). Subscribe/unsubscribe to account updates from Redis.
+ * Uses noServer: true so a single upgrade handler can route both price and account WS.
  */
 
-import type { Server as HttpServer } from 'http';
+import type { IncomingMessage } from 'http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { verifyToken } from '@clerk/backend';
 import { env } from '../config/env';
@@ -19,7 +20,12 @@ import {
   type AccountUpdatePayload,
 } from '../streaming/accountUpdateBus';
 
-const WS_PATH = '/api/ws/account';
+export const ACCOUNT_WS_PATH = '/api/ws/account';
+
+export interface AccountWebSocketRoute {
+  wss: WebSocketServer;
+  path: string;
+}
 
 interface ClientState {
   userId: string;
@@ -58,26 +64,27 @@ async function authenticateWs(url: string, headers: Record<string, string | stri
   }
 }
 
-export function attachAccountWebSocket(httpServer: HttpServer): void {
+/** Creates the account WebSocket server with noServer: true. Caller must handle upgrade and route by path. */
+export function attachAccountWebSocket(): AccountWebSocketRoute | null {
   if (!env.ACCOUNT_WS_ENABLED) {
     logger.info('Account WebSocket disabled by config');
-    return;
+    return null;
   }
   if (!env.REDIS_URL?.trim()) {
     logger.warn('Account WebSocket disabled: REDIS_URL not set');
-    return;
+    return null;
   }
 
   const publisher = createRedisPublisher();
   const subscriber = createRedisSubscriber();
   if (!publisher || !subscriber) {
     logger.warn('Account WebSocket disabled: Redis clients not available');
-    return;
+    return null;
   }
 
-  const wss = new WebSocketServer({ server: httpServer, path: WS_PATH, noServer: false });
+  const wss = new WebSocketServer({ noServer: true });
 
-  wss.on('connection', async (ws: WebSocket, req) => {
+  wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
     const url = req.url ?? '';
     const headers: Record<string, string | string[] | undefined> = {};
     req.headers && Object.assign(headers, req.headers);
@@ -166,5 +173,6 @@ export function attachAccountWebSocket(httpServer: HttpServer): void {
     });
   });
 
-  logger.info(`Account WebSocket server listening on path ${WS_PATH}`);
+  logger.info(`Account WebSocket server listening on path ${ACCOUNT_WS_PATH}`);
+  return { wss, path: ACCOUNT_WS_PATH };
 }

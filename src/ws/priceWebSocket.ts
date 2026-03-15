@@ -3,10 +3,10 @@
  * Server subscribes to a fixed set of priority symbols (Finnhub free tier: 50).
  * All trade messages are broadcast to every connected client; dashboard filters locally.
  * Enriched snapshots (pct change vs day open, SMA5, SMA20) are sent on a timer.
+ * Uses noServer: true so a single upgrade handler can route both price and account WS.
  * @see https://finnhub.io/docs/api/websocket-trades
  */
 
-import type { Server as HttpServer } from 'http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
@@ -19,12 +19,18 @@ import {
 import { PriceSnapshotState } from '../services/finnhub/priceSnapshotState';
 import type { PriceSnapshotMessage } from '../services/finnhub/priceSnapshotTypes';
 
-const WS_PATH = '/api/ws';
+export const PRICE_WS_PATH = '/api/ws';
 
-export function attachPriceWebSocket(httpServer: HttpServer): void {
+export interface PriceWebSocketRoute {
+  wss: WebSocketServer;
+  path: string;
+}
+
+/** Creates the price WebSocket server with noServer: true. Caller must handle upgrade and route by path. */
+export function attachPriceWebSocket(): PriceWebSocketRoute | null {
   if (!env.FINNHUB_API_KEY) {
     logger.warn('Price WebSocket disabled: FINNHUB_API_KEY not set');
-    return;
+    return null;
   }
 
   const symbolLimit = Math.max(1, Math.min(env.FINNHUB_WS_SYMBOL_LIMIT, 50));
@@ -36,7 +42,7 @@ export function attachPriceWebSocket(httpServer: HttpServer): void {
   const snapshotState = new PriceSnapshotState(symbols);
   const snapshotIntervalMs = Math.max(1000, Math.min(env.FINNHUB_WS_SNAPSHOT_INTERVAL_MS ?? 2000, 60_000));
 
-  const wss = new WebSocketServer({ server: httpServer, path: WS_PATH });
+  const wss = new WebSocketServer({ noServer: true });
 
   const finnhub = new FinnhubWebSocketService({
     apiKey: env.FINNHUB_API_KEY,
@@ -96,5 +102,6 @@ export function attachPriceWebSocket(httpServer: HttpServer): void {
     });
   }, snapshotIntervalMs);
 
-  logger.info(`Price WebSocket server listening on path ${WS_PATH} (${symbols.length} symbols, snapshot every ${snapshotIntervalMs}ms)`);
+  logger.info(`Price WebSocket server listening on path ${PRICE_WS_PATH} (${symbols.length} symbols, snapshot every ${snapshotIntervalMs}ms)`);
+  return { wss, path: PRICE_WS_PATH };
 }

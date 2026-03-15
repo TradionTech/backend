@@ -44,6 +44,8 @@ declare module 'metaapi.cloud-sdk' {
 
   /** Abstract history storage for deals and orders. SDK uses this when streaming. */
   export abstract class HistoryStorage {
+    /** Called by SDK when the streaming connection is set up. */
+    initialize?(): Promise<void>;
     abstract get orderSynchronizationFinished(): boolean;
     abstract get dealSynchronizationFinished(): boolean;
     abstract get deals(): any[];
@@ -54,6 +56,12 @@ declare module 'metaapi.cloud-sdk' {
     abstract historyOrdersByTicket(ticket: string): any[];
     abstract historyOrdersByPosition(positionId: string): any[];
     abstract historyOrdersByTimeRange(start: Date, end: Date): any[];
+    /** SDK uses for incremental order sync. Must return a Date (SDK calls .getTime()). */
+    lastHistoryOrderTime?(): Date;
+    /** SDK may use for incremental deal sync. Must return a Date (SDK calls .getTime()). */
+    lastHistoryDealTime?(): Date;
+    /** SDK calls this name for last deal time. */
+    lastDealTime?(): Date;
     /** Called by SDK when merging incoming deal history. */
     mergeDeals?(deals: any[]): void;
     /** Called by SDK when merging incoming order history. */
@@ -61,13 +69,25 @@ declare module 'metaapi.cloud-sdk' {
   }
 
   export interface SynchronizationListener {
+    onConnected?(): void;
+    onSynchronizationStarted?(instanceIndex?: string): void;
+    onBrokerConnectionStatusChanged?(instanceIndex: string, connected: boolean): void;
+    onHealthStatus?(instanceIndex: string, status: any): void;
+    onSymbolSpecificationUpdated?(instanceIndex: string, specification?: any): void;
+    onSymbolSpecificationsUpdated?(instanceIndex: string, specifications?: any): void;
     onAccountInformationUpdated?(instanceIndex: string, accountInformation: any): void;
+    onPositionsReplaced?(instanceIndex: string, positions: any[]): void;
+    onPositionsSynchronized?(instanceIndex: string, synchronizationId?: string): void;
     onPositionUpdated?(instanceIndex: string, position: any): void;
     onPositionRemoved?(instanceIndex: string, positionId: string): void;
+    onPendingOrdersReplaced?(instanceIndex: string, orders: any[]): void;
+    onPendingOrdersSynchronized?(instanceIndex: string, synchronizationId?: string): void;
     onOrderUpdated?(instanceIndex: string, order: any): void;
     onOrderCompleted?(instanceIndex: string, order: any): void;
     onOrderSynchronizationFinished?(instanceIndex: string, synchronizationId: string): void;
+    onHistoryOrdersSynchronized?(instanceIndex: string, synchronizationId?: string): void;
     onDealSynchronizationFinished?(instanceIndex: string, synchronizationId: string): void;
+    onDealsSynchronized?(instanceIndex?: string, synchronizationId?: string): void;
     onDealAdded?(instanceIndex: string, deal: any): void;
   }
 

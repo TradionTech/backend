@@ -12,8 +12,24 @@ const httpServer = app.listen(port, () => {
   logger.info(`TradionAI API running on :${port} [${env.NODE_ENV}]`);
 });
 
-attachPriceWebSocket(httpServer);
-attachAccountWebSocket(httpServer);
+const priceWs = attachPriceWebSocket();
+const accountWs = attachAccountWebSocket();
+
+httpServer.on('upgrade', (request, socket, head) => {
+  const pathname = new URL(request.url ?? '', 'http://localhost').pathname;
+  if (priceWs && pathname === priceWs.path) {
+    priceWs.wss.handleUpgrade(request, socket, head, (ws) => {
+      priceWs.wss.emit('connection', ws, request);
+    });
+  } else if (accountWs && pathname === accountWs.path) {
+    accountWs.wss.handleUpgrade(request, socket, head, (ws) => {
+      accountWs.wss.emit('connection', ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
 attachStreamingInProcess();
 
 if (env.ENABLE_JOBS) {

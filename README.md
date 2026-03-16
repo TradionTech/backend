@@ -153,6 +153,82 @@ When `ENABLE_JOBS=true` (default), the scheduler runs:
 
 Configurable via `ENABLE_JOBS` environment variable.
 
+#### Account credential issues and remediation flow
+
+If MetaAPI can no longer authenticate to a broker account (for example, because the user deleted it at the broker or changed the password/server), `syncTradingData` will detect the MetaAPI authentication error and publish a `credential_issue` message on the account streaming bus. This is forwarded to any connected frontend client over the account WebSocket (`/api/ws/account`).
+
+**Server → client (`/api/ws/account`)**
+
+- `credential_issue`
+
+  ```json
+  {
+    "type": "credential_issue",
+    "accountId": "<metaapiAccountId>",
+    "code": "METAAPI_AUTH_FAILED",
+    "message": "We were not able to connect to your broker using credentials provided. Please verify your login, password, and server or confirm account deletion."
+  }
+  ```
+
+  - Frontend should prompt the user to either:
+    - Re-enter valid broker credentials, or
+    - Confirm deletion of the account from Tradion (and MetaAPI).
+
+- `account_credentials_update_ok`
+
+  ```json
+  {
+    "type": "account_credentials_update_ok",
+    "accountId": "<metaapiAccountId>"
+  }
+  ```
+
+- `account_credentials_update_error`
+
+  ```json
+  {
+    "type": "account_credentials_update_error",
+    "accountId": "<metaapiAccountId>",
+    "message": "Failed to update account credentials"
+  }
+  ```
+
+- `account_deleted`
+
+  ```json
+  {
+    "type": "account_deleted",
+    "accountId": "<metaapiAccountId>"
+  }
+  ```
+
+**Client → server (`/api/ws/account`)**
+
+- `account_credentials_update`
+
+  ```json
+  {
+    "action": "account_credentials_update",
+    "accountId": "<metaapiAccountId>",
+    "password": "newBrokerPassword",
+    "name": "Optional new human name",
+    "server": "Optional new server name, e.g. ICMarketsSC-Demo"
+  }
+  ```
+
+  - Backend calls MetaAPI provisioning [Update account](https://metaapi.cloud/docs/provisioning/api/account/updateAccount/) and updates the local `MetaApiAccount` row with any new `name` / `server`.
+
+- `account_delete_confirm`
+
+  ```json
+  {
+    "action": "account_delete_confirm",
+    "accountId": "<metaapiAccountId>"
+  }
+  ```
+
+  - Backend deletes the MetaAPI account via provisioning API and removes the corresponding `MetaApiAccount` row for the current user.
+
 ## Database Models
 
 - **User**: Clerk user integration with plan management

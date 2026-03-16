@@ -154,6 +154,41 @@ export async function listAccountsFromProvisioningApi(): Promise<MetaApiProvisio
 }
 
 /**
+ * Update an existing MetaAPI trading account via provisioning API.
+ * See https://metaapi.cloud/docs/provisioning/api/account/updateAccount/
+ */
+export interface UpdateMetaApiAccountBody {
+  password?: string;
+  name?: string;
+  server?: string;
+  magic?: number;
+  manualTrades?: boolean;
+  slippage?: number;
+  quoteStreamingIntervalInSeconds?: number;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  copyFactoryRoles?: string[];
+  resourceSlots?: number;
+  copyFactoryResourceSlots?: number;
+  metastatsApiEnabled?: boolean;
+  allocateDedicatedIp?: string;
+}
+
+export async function updateAccountViaProvisioningApi(
+  accountId: string,
+  body: UpdateMetaApiAccountBody
+): Promise<void> {
+  const client = createProvisioningClient();
+  await client.put(`/users/current/accounts/${accountId}`, body);
+}
+
+/** Delete a MetaAPI trading account via provisioning API. */
+export async function deleteAccountViaProvisioningApi(accountId: string): Promise<void> {
+  const client = createProvisioningClient();
+  await client.delete(`/users/current/accounts/${accountId}`);
+}
+
+/**
  * Find an existing MetaAPI account by login and server (case-sensitive match after trim).
  * Returns the account from MetaAPI if found, null otherwise.
  */

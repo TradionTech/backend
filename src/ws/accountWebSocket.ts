@@ -19,6 +19,11 @@ import {
   getAccountUpdatesChannel,
   type AccountUpdatePayload,
 } from '../streaming/accountUpdateBus';
+import {
+  deleteAccountViaProvisioningApi,
+  updateAccountViaProvisioningApi,
+  type UpdateMetaApiAccountBody,
+} from '../services/brokers/metaapi';
 
 export const ACCOUNT_WS_PATH = '/api/ws/account';
 
@@ -114,7 +119,7 @@ export function attachAccountWebSocket(): AccountWebSocketRoute | null {
 
     ws.send(JSON.stringify({ type: 'ready', message: 'Connected. Send subscribe with accountIds.' }));
 
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.action === 'subscribe' && Array.isArray(msg.accountIds)) {
@@ -161,6 +166,79 @@ export function attachAccountWebSocket(): AccountWebSocketRoute | null {
             const unsub = state.unsubFns.get(metaapiAccountId);
             if (unsub) unsub();
           }
+        } else if (msg.action === 'account_credentials_update') {
+          const metaapiAccountId = String(msg.accountId ?? '').trim();
+          if (!metaapiAccountId || !state.allowedAccountIds.has(metaapiAccountId)) {
+            return;
+          }
+
+          const payload: UpdateMetaApiAccountBody = {};
+          if (typeof msg.password === 'string' && msg.password.trim()) {
+            payload.password = msg.password.trim();
+          }
+          if (typeof msg.name === 'string' && msg.name.trim()) {
+            payload.name = msg.name.trim();
+          }
+          if (typeof msg.server === 'string' && msg.server.trim()) {
+            payload.server = msg.server.trim();
+          }
+
+          if (!payload.password) {
+            ws.send(
+              JSON.stringify({
+                type: 'error',
+                message: 'account_credentials_update requires password',
+              })
+            );
+            return;
+          }
+
+          try {
+            await updateAccountViaProvisioningApi(metaapiAccountId, payload);
+            await MetaApiAccount.update(
+              {
+                ...(payload.name && { name: payload.name }),
+                ...(payload.server && { server: payload.server }),
+              },
+              { where: { metaapiAccountId, userId: state.userId } }
+            );
+            ws.send(
+              JSON.stringify({
+                type: 'account_credentials_update_ok',
+                accountId: metaapiAccountId,
+              })
+            );
+          } catch (e) {
+            ws.send(
+              JSON.stringify({
+                type: 'account_credentials_update_error',
+                accountId: metaapiAccountId,
+                message: (e as Error)?.message ?? 'Failed to update account credentials',
+              })
+            );
+          }
+        } else if (msg.action === 'account_delete_confirm') {
+          const metaapiAccountId = String(msg.accountId ?? '').trim();
+          if (!metaapiAccountId || !state.allowedAccountIds.has(metaapiAccountId)) {
+            return;
+          }
+
+          try {
+            await deleteAccountViaProvisioningApi(metaapiAccountId);
+          } catch {
+            // Even if remote delete fails, attempt to remove local record to avoid dangling references
+          }
+
+          await MetaApiAccount.destroy({
+            where: { metaapiAccountId, userId: state.userId },
+          });
+
+          ws.send(
+            JSON.stringify({
+              type: 'account_deleted',
+              accountId: metaapiAccountId,
+            })
+          );
         }
       } catch (e) {
         logger.debug('Account WS invalid message', { err: (e as Error)?.message });

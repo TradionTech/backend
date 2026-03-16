@@ -250,8 +250,11 @@ export class SequelizeHistoryStorage {
   onHealthStatus(_instanceIndex: string, _status: unknown): void {}
   onSymbolSpecificationUpdated(_instanceIndex: string, _specification?: unknown): void {}
   onSymbolSpecificationsUpdated(_instanceIndex: string, _specifications?: unknown): void {}
+  onSymbolPriceUpdated(_instanceIndex: string, _price?: unknown): void {}
+  onSymbolPricesUpdated(_instanceIndex: string, _prices?: unknown): void {}
   onAccountInformationUpdated(_instanceIndex: string, _accountInformation: unknown): void {}
   onPositionsReplaced(_instanceIndex: string, _positions: unknown[]): void {}
+  onPositionsUpdated(_instanceIndex: string, _positions?: unknown[]): void {}
   onPositionsSynchronized(_instanceIndex: string, _synchronizationId?: string): void {}
   onPositionUpdated(_instanceIndex: string, _position: unknown): void {}
   onPositionRemoved(_instanceIndex: string, _positionId: string): void {}
@@ -261,6 +264,7 @@ export class SequelizeHistoryStorage {
   onOrderCompleted(_instanceIndex: string, _order: unknown): void {}
   onOrderSynchronizationFinished(_instanceIndex: string, _synchronizationId: string): void {}
   onHistoryOrdersSynchronized(_instanceIndex?: string, _synchronizationId?: string): void {}
+  onHistoryOrderAdded(_instanceIndex: string, _order: unknown): void {}
   onDealSynchronizationFinished(_instanceIndex: string, _synchronizationId: string): void {}
   onDealsSynchronized(_instanceIndex?: string, _synchronizationId?: string): void {}
   onDealAdded(_instanceIndex: string, _deal: unknown): void {}

@@ -75,8 +75,11 @@ declare module 'metaapi.cloud-sdk' {
     onHealthStatus?(instanceIndex: string, status: any): void;
     onSymbolSpecificationUpdated?(instanceIndex: string, specification?: any): void;
     onSymbolSpecificationsUpdated?(instanceIndex: string, specifications?: any): void;
+    onSymbolPriceUpdated?(instanceIndex: string, price?: any): void;
+    onSymbolPricesUpdated?(instanceIndex: string, prices?: any): void;
     onAccountInformationUpdated?(instanceIndex: string, accountInformation: any): void;
     onPositionsReplaced?(instanceIndex: string, positions: any[]): void;
+    onPositionsUpdated?(instanceIndex: string, positions?: any[]): void;
     onPositionsSynchronized?(instanceIndex: string, synchronizationId?: string): void;
     onPositionUpdated?(instanceIndex: string, position: any): void;
     onPositionRemoved?(instanceIndex: string, positionId: string): void;
@@ -86,6 +89,7 @@ declare module 'metaapi.cloud-sdk' {
     onOrderCompleted?(instanceIndex: string, order: any): void;
     onOrderSynchronizationFinished?(instanceIndex: string, synchronizationId: string): void;
     onHistoryOrdersSynchronized?(instanceIndex: string, synchronizationId?: string): void;
+    onHistoryOrderAdded?(instanceIndex: string, order: any): void;
     onDealSynchronizationFinished?(instanceIndex: string, synchronizationId: string): void;
     onDealsSynchronized?(instanceIndex?: string, synchronizationId?: string): void;
     onDealAdded?(instanceIndex: string, deal: any): void;

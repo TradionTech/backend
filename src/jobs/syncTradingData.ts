@@ -12,6 +12,26 @@ import {
   syncAccountStateToDb,
 } from '../services/brokers/metaapi';
 import { logger } from '../config/logger';
+import { createRedisPublisher, publishAccountUpdate } from '../streaming/accountUpdateBus';
+
+let publisher = createRedisPublisher();
+
+function getPublisher() {
+  if (!publisher) {
+    publisher = createRedisPublisher();
+  }
+  return publisher;
+}
+
+function isMetaApiAuthError(message: string | undefined): boolean {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('we were not able to connect to your broker using credentials provided') ||
+    lower.includes('we failed to authenticate to your broker using credentials provided') ||
+    lower.includes('e_auth')
+  );
+}
 
 type PositionWithLegacyId = MetatraderPosition & {
   positionId?: string;
@@ -114,7 +134,21 @@ export async function syncTradingData() {
     try {
       await syncTradingDataForAccount(acc);
     } catch (e) {
-      logger.error('syncTradingData error for account', { accountId: acc.id, err: (e as Error)?.message });
+      const message = (e as Error)?.message;
+      logger.error('syncTradingData error for account', { accountId: acc.id, err: message });
+
+      if (isMetaApiAuthError(message)) {
+        const pub = getPublisher();
+        if (pub) {
+          publishAccountUpdate(pub, {
+            type: 'credential_issue',
+            accountId: acc.metaapiAccountId as string,
+            code: 'METAAPI_AUTH_FAILED',
+            message:
+              'We were not able to connect to your broker using credentials provided. Please verify your login, password, and server or confirm account deletion.',
+          });
+        }
+      }
     }
   }
 }

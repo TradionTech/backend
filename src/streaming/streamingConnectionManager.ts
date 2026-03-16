@@ -41,6 +41,8 @@ function buildListener(metaapiAccountId: string): SynchronizationListener {
     onHealthStatus() {},
     onSymbolSpecificationUpdated() {},
     onSymbolSpecificationsUpdated() {},
+    onSymbolPriceUpdated() {},
+    onSymbolPricesUpdated() {},
     onAccountInformationUpdated(_instanceIndex: string, accountInformation: unknown) {
       const pub = getPublisher();
       if (!pub) return;
@@ -51,6 +53,15 @@ function buildListener(metaapiAccountId: string): SynchronizationListener {
       });
     },
     onPositionsReplaced(_instanceIndex: string, positions: unknown) {
+      const pub = getPublisher();
+      if (!pub) return;
+      publishAccountUpdate(pub, {
+        type: 'positions',
+        accountId: metaapiAccountId,
+        data: Array.isArray(positions) ? positions : [],
+      });
+    },
+    onPositionsUpdated(_instanceIndex: string, positions?: unknown) {
       const pub = getPublisher();
       if (!pub) return;
       publishAccountUpdate(pub, {
@@ -108,6 +119,7 @@ function buildListener(metaapiAccountId: string): SynchronizationListener {
       const pub = getPublisher();
       if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
     },
+    onHistoryOrderAdded(_instanceIndex: string, _order: unknown) {},
     onDealSynchronizationFinished(_instanceIndex: string, _synchronizationId: string) {
       const pub = getPublisher();
       if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });

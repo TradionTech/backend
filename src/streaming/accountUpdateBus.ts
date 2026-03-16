@@ -18,7 +18,13 @@ export type AccountUpdatePayload =
   | { type: 'deals'; accountId: string; data: unknown[] }
   | { type: 'synchronized'; accountId: string }
   | { type: 'error'; accountId: string; message: string }
-  | { type: 'reconnect'; accountId: string };
+  | { type: 'reconnect'; accountId: string }
+  | {
+      type: 'credential_issue';
+      accountId: string;
+      code: 'METAAPI_AUTH_FAILED';
+      message: string;
+    };
 
 export interface StreamingSubscribeMessage {
   metaapiAccountId: string;

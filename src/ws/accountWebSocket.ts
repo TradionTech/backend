@@ -25,6 +25,7 @@ import {
   buildSummaryResponse,
   buildPerformanceResponse,
   isPrimed,
+  primeFromDashboardSummary,
   primeJournalAggregatesFromDb,
   primeJournalAggregatesFromRest,
 } from '../streaming/journalAggregates';
@@ -90,14 +91,20 @@ async function runJournalPush(userId: string): Promise<void> {
   );
   if (!wantJournal) return;
 
+  let summary: ReturnType<typeof buildSummaryResponse>;
   if (!isPrimed(userId)) {
-    const fromRest = await primeJournalAggregatesFromRest(userId);
-    if (!fromRest) {
-      await primeJournalAggregatesFromDb(userId);
+    const dashboardSummary = await primeFromDashboardSummary(userId);
+    if (dashboardSummary) {
+      summary = dashboardSummary;
+    } else {
+      const fromRest = await primeJournalAggregatesFromRest(userId);
+      if (!fromRest) await primeJournalAggregatesFromDb(userId);
+      summary = buildSummaryResponse(userId);
     }
+  } else {
+    summary = buildSummaryResponse(userId);
   }
 
-  const summary = buildSummaryResponse(userId);
   const performance = buildPerformanceResponse(userId);
   const summaryMsg = JSON.stringify({ type: 'journal_summary', data: summary });
   const perfMsg = JSON.stringify({ type: 'journal_performance', data: performance });

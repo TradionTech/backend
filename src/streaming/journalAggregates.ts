@@ -12,12 +12,15 @@ import type {
   JournalSummaryResponse,
   JournalPerformanceResponse,
 } from '../services/journal/journalDashboardService.js';
+import { journalDashboardService } from '../services/journal/journalDashboardService.js';
 import type { AnalyzableTrade } from '../services/journal/journalTypes.js';
 import { journalService } from '../services/journal/journalService.js';
 import { getOpenPositions } from '../services/brokers/metaapi.js';
 import { logger } from '../config/logger.js';
 
 const PNL_LIST_CAP = 10_000;
+/** Within this window we count at most one trade per positionId; further exit deals for same position only add PnL */
+const RECENT_EXIT_DEDUPE_MS = 60_000;
 
 export interface JournalAggregateState {
   netPnl: number;
@@ -35,6 +38,8 @@ export interface JournalAggregateState {
   /** Set during prime; empty when stream-only */
   monthlyPnl: Array<{ month: string; pnl: number }>;
   monthlyWinRate: Array<{ month: string; winRate: number }>;
+  /** positionId -> timestamp when we counted it as one trade; used to dedupe multiple exit deals per close */
+  recentExitByPositionId: Map<string, number>;
   /** When the state was last primed (full calculation); stream events increment from this baseline */
   primedAt?: number;
 }
@@ -56,6 +61,7 @@ function createEmptyState(): JournalAggregateState {
     perAccountPositionCount: new Map(),
     monthlyPnl: [],
     monthlyWinRate: [],
+    recentExitByPositionId: new Map(),
   };
 }
 
@@ -78,39 +84,57 @@ export function isPrimed(userId: string): boolean {
   return state != null && state.primedAt != null;
 }
 
-/** Streamed deal payload: at least profit, optional commission, swap, time (ISO or ms). */
+const EXIT_ENTRY_TYPES = new Set(['DEAL_ENTRY_OUT', 'DEAL_ENTRY_OUT_BY']);
+
+/**
+ * Apply a streamed deal. Only exit deals (DEAL_ENTRY_OUT / DEAL_ENTRY_OUT_BY) count as one
+ * closed trade; other deals are ignored. Multiple exit deals for the same position (e.g. main
+ * + commission/swap) are deduped by positionId: only the first within RECENT_EXIT_DEDUPE_MS
+ * counts as one trade; later ones only add PnL.
+ */
 export function applyDeal(
   userId: string,
   deal: Record<string, unknown>,
   _accountId: string
 ): void {
+  const entryType = String(deal.entryType ?? '').toUpperCase();
+  if (!EXIT_ENTRY_TYPES.has(entryType)) return;
+
   const state = getOrCreateAggregates(userId);
+  if (!state.recentExitByPositionId) state.recentExitByPositionId = new Map();
   const profit = Number(deal.profit ?? 0);
   const commission = Number(deal.commission ?? 0);
   const swap = Number(deal.swap ?? 0);
   const realizedPnl = profit - commission - swap;
 
-  state.netPnl += realizedPnl;
-  state.totalTrades += 1;
-  if (realizedPnl > 0) state.winningTrades += 1;
-  else if (realizedPnl < 0) state.losingTrades += 1;
-  else state.breakevenTrades += 1;
-
-  let dealTime: Date | null = null;
-  const t = deal.time;
-  if (t != null) {
-    if (typeof t === 'string') dealTime = new Date(t);
-    else if (typeof t === 'number') dealTime = new Date(t);
+  const positionId = String(deal.positionId ?? deal.id ?? '');
+  const nowMs = Date.now();
+  for (const [pid, ts] of state.recentExitByPositionId.entries()) {
+    if (nowMs - ts > RECENT_EXIT_DEDUPE_MS) state.recentExitByPositionId.delete(pid);
   }
-  const now = new Date();
-  const day7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const day30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  if (dealTime) {
+
+  const alreadyCounted = positionId && state.recentExitByPositionId.has(positionId);
+
+  state.netPnl += realizedPnl;
+  if (deal.time != null) {
+    const dealTime =
+      typeof deal.time === 'string' ? new Date(deal.time) : new Date(Number(deal.time));
+    const now = new Date();
+    const day7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const day30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     if (dealTime >= day7) state.pnlLast7Days += realizedPnl;
     if (dealTime >= day30) state.pnlLast30Days += realizedPnl;
     if (dealTime >= startOfMonth) state.pnlCurrentMonth += realizedPnl;
   }
+
+  if (alreadyCounted) return;
+
+  if (positionId) state.recentExitByPositionId.set(positionId, nowMs);
+  state.totalTrades += 1;
+  if (realizedPnl > 0) state.winningTrades += 1;
+  else if (realizedPnl < 0) state.losingTrades += 1;
+  else state.breakevenTrades += 1;
 
   state.pnlList.push(realizedPnl);
   if (state.pnlList.length > PNL_LIST_CAP) {
@@ -298,8 +322,8 @@ export async function primeJournalAggregatesFromDb(userId: string): Promise<bool
 
     const trades: AnalyzableTrade[] = [];
     for (const { entry, exit } of byPosition.values()) {
-      if (!entry) continue;
-      const t = mapTradeHistoryToAnalyzable(entry, exit ?? undefined, userId);
+      if (!entry || !exit) continue;
+      const t = mapTradeHistoryToAnalyzable(entry, exit, userId);
       if (t) trades.push(t);
     }
     trades.sort((a, b) => (a.closedAt?.getTime() ?? 0) - (b.closedAt?.getTime() ?? 0));
@@ -353,10 +377,81 @@ export async function primeJournalAggregatesFromDb(userId: string): Promise<bool
   return state.totalTrades > 0 || state.openPositionsCount > 0;
 }
 
+const DEFAULT_WINDOW_MS = 2 * 365 * 24 * 60 * 60 * 1000;
+
+/**
+ * Prime from the same source as the REST dashboard summary and return that summary.
+ * The first WebSocket journal_summary message will then match GET /journal/dashboard/summary.
+ * Fetches per-account position counts for stream updates and fills pnlList from getTradesForWindow (cached).
+ */
+export async function primeFromDashboardSummary(
+  userId: string
+): Promise<JournalSummaryResponse | null> {
+  let summary: JournalSummaryResponse;
+  try {
+    summary = await journalDashboardService.getSummary(userId);
+  } catch (e) {
+    logger.warn('primeFromDashboardSummary: getSummary failed', {
+      userId,
+      err: (e as Error)?.message,
+    });
+    return null;
+  }
+
+  const state = getOrCreateAggregates(userId);
+  const to = new Date();
+  const from = new Date(to.getTime() - DEFAULT_WINDOW_MS);
+
+  const accounts = await MetaApiAccount.findAll({
+    where: { userId },
+    attributes: ['metaapiAccountId'],
+  });
+  state.perAccountPositionCount.clear();
+  for (const acc of accounts) {
+    const metaapiAccountId = acc.metaapiAccountId as string;
+    try {
+      const positions = await getOpenPositions(metaapiAccountId);
+      state.perAccountPositionCount.set(metaapiAccountId, Array.isArray(positions) ? positions.length : 0);
+    } catch {
+      state.perAccountPositionCount.set(metaapiAccountId, 0);
+    }
+  }
+  state.openPositionsCount = summary.positionStatus.openPositions;
+
+  state.netPnl = summary.netPnl;
+  state.totalTrades = summary.totalTrades;
+  state.winningTrades = summary.winLossStats.winningTrades;
+  state.losingTrades = summary.winLossStats.losingTrades;
+  state.breakevenTrades = summary.winLossStats.breakevenTrades;
+  state.pnlLast7Days = summary.recentActivity.pnlLast7Days;
+  state.pnlLast30Days = summary.recentActivity.pnlLast30Days;
+  state.pnlCurrentMonth = summary.recentActivity.pnlCurrentMonth;
+  state.monthlyPnl = [...summary.monthlyPnl];
+  state.monthlyWinRate = [...summary.monthlyWinRate];
+
+  try {
+    const trades = await journalService.getTradesForWindow({ userId, from, to });
+    state.pnlList = trades.map((t) => t.realizedPnlUsd);
+    if (state.pnlList.length > PNL_LIST_CAP) {
+      state.pnlList = state.pnlList.slice(-PNL_LIST_CAP);
+    }
+  } catch {
+    state.pnlList = [];
+  }
+
+  state.primedAt = Date.now();
+  logger.debug('primeFromDashboardSummary', {
+    userId,
+    totalTrades: state.totalTrades,
+    openPositions: state.openPositionsCount,
+  });
+  return summary;
+}
+
 /**
  * Prime in-memory journal aggregates using the same full calculation as the dashboard
  * (journalService.getTradesForWindow + getOpenPositionsCount, then same metrics).
- * Use this as the primary prime so PnL, max drawdown, positions, etc. match the dashboard.
+ * Use as fallback when primeFromDashboardSummary fails.
  * State is stored with primedAt; stream events then increment from this baseline.
  */
 export async function primeJournalAggregatesFromRest(userId: string): Promise<boolean> {

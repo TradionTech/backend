@@ -110,19 +110,25 @@ function buildListener(metaapiAccountId: string, connection: StreamingConnection
       const pub = getPublisher();
       if (pub) publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
     },
-    onPositionUpdated(_instanceIndex: string, position: unknown) {
+    onPositionUpdated(_instanceIndex: string, _position: unknown) {
       const pub = getPublisher();
       if (!pub) return;
+      const positions = connection.terminalState?.positions;
       publishAccountUpdate(pub, {
         type: 'positions',
         accountId: metaapiAccountId,
-        data: [position],
+        data: Array.isArray(positions) ? positions : [],
       });
     },
     onPositionRemoved(_instanceIndex: string, _positionId: string) {
       const pub = getPublisher();
       if (!pub) return;
-      publishAccountUpdate(pub, { type: 'positions', accountId: metaapiAccountId, data: [] });
+      const positions = connection.terminalState?.positions;
+      publishAccountUpdate(pub, {
+        type: 'positions',
+        accountId: metaapiAccountId,
+        data: Array.isArray(positions) ? positions : [],
+      });
     },
     onPendingOrdersReplaced(_instanceIndex: string, orders: unknown) {
       const pub = getPublisher();

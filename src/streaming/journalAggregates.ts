@@ -14,6 +14,7 @@ import type {
 } from '../services/journal/journalDashboardService.js';
 import type { AnalyzableTrade } from '../services/journal/journalTypes.js';
 import { journalService } from '../services/journal/journalService.js';
+import { getOpenPositions } from '../services/brokers/metaapi.js';
 import { logger } from '../config/logger.js';
 
 const PNL_LIST_CAP = 10_000;
@@ -31,9 +32,11 @@ export interface JournalAggregateState {
   pnlList: number[];
   /** Per accountId (metaapiAccountId) position count; summed for openPositionsCount */
   perAccountPositionCount: Map<string, number>;
-  /** Set during prime from DB; empty when stream-only */
+  /** Set during prime; empty when stream-only */
   monthlyPnl: Array<{ month: string; pnl: number }>;
   monthlyWinRate: Array<{ month: string; winRate: number }>;
+  /** When the state was last primed (full calculation); stream events increment from this baseline */
+  primedAt?: number;
 }
 
 const aggregatesByUserId = new Map<string, JournalAggregateState>();
@@ -69,11 +72,10 @@ export function hasAggregates(userId: string): boolean {
   return aggregatesByUserId.has(userId);
 }
 
-/** Check if state has been primed with at least one trade (or explicit zero state from prime). */
+/** Check if state has been primed (full calculation run and primedAt set). */
 export function isPrimed(userId: string): boolean {
   const state = aggregatesByUserId.get(userId);
-  if (!state) return false;
-  return state.totalTrades > 0 || state.monthlyPnl.length > 0;
+  return state != null && state.primedAt != null;
 }
 
 /** Streamed deal payload: at least profit, optional commission, swap, time (ISO or ms). */
@@ -341,17 +343,21 @@ export async function primeJournalAggregatesFromDb(userId: string): Promise<bool
     return { month, winRate: cur.count > 0 ? (cur.wins / cur.count) * 100 : 0 };
   });
 
+  state.primedAt = Date.now();
   logger.debug('primeJournalAggregatesFromDb', {
     userId,
     totalTrades: state.totalTrades,
     openPositions: state.openPositionsCount,
+    primedAt: state.primedAt,
   });
   return state.totalTrades > 0 || state.openPositionsCount > 0;
 }
 
 /**
- * Prime in-memory journal aggregates from MetaAPI REST when DB has no data.
- * Call only after primeJournalAggregatesFromDb returned false or left state empty.
+ * Prime in-memory journal aggregates using the same full calculation as the dashboard
+ * (journalService.getTradesForWindow + getOpenPositionsCount, then same metrics).
+ * Use this as the primary prime so PnL, max drawdown, positions, etc. match the dashboard.
+ * State is stored with primedAt; stream events then increment from this baseline.
  */
 export async function primeJournalAggregatesFromRest(userId: string): Promise<boolean> {
   const state = getOrCreateAggregates(userId);
@@ -368,9 +374,22 @@ export async function primeJournalAggregatesFromRest(userId: string): Promise<bo
     return false;
   }
 
-  const openCount = await journalService.getOpenPositionsCount(userId);
-
+  const accounts = await MetaApiAccount.findAll({
+    where: { userId },
+    attributes: ['metaapiAccountId'],
+  });
   state.perAccountPositionCount.clear();
+  for (const acc of accounts) {
+    const metaapiAccountId = acc.metaapiAccountId as string;
+    try {
+      const positions = await getOpenPositions(metaapiAccountId);
+      state.perAccountPositionCount.set(metaapiAccountId, Array.isArray(positions) ? positions.length : 0);
+    } catch {
+      state.perAccountPositionCount.set(metaapiAccountId, 0);
+    }
+  }
+  state.openPositionsCount = Array.from(state.perAccountPositionCount.values()).reduce((s, n) => s + n, 0);
+
   state.netPnl = 0;
   state.totalTrades = 0;
   state.winningTrades = 0;
@@ -382,7 +401,6 @@ export async function primeJournalAggregatesFromRest(userId: string): Promise<bo
   state.pnlList = [];
   state.monthlyPnl = [];
   state.monthlyWinRate = [];
-  state.openPositionsCount = openCount;
 
   const now = new Date();
   const day7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -425,10 +443,12 @@ export async function primeJournalAggregatesFromRest(userId: string): Promise<bo
     return { month, winRate: cur.count > 0 ? (cur.wins / cur.count) * 100 : 0 };
   });
 
+  state.primedAt = Date.now();
   logger.debug('primeJournalAggregatesFromRest', {
     userId,
     totalTrades: state.totalTrades,
     openPositions: state.openPositionsCount,
+    primedAt: state.primedAt,
   });
   return state.totalTrades > 0 || state.openPositionsCount > 0;
 }

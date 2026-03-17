@@ -91,9 +91,9 @@ async function runJournalPush(userId: string): Promise<void> {
   if (!wantJournal) return;
 
   if (!isPrimed(userId)) {
-    const fromDb = await primeJournalAggregatesFromDb(userId);
-    if (!fromDb) {
-      await primeJournalAggregatesFromRest(userId);
+    const fromRest = await primeJournalAggregatesFromRest(userId);
+    if (!fromRest) {
+      await primeJournalAggregatesFromDb(userId);
     }
   }
 
@@ -325,9 +325,7 @@ export function attachAccountWebSocket(): AccountWebSocketRoute | null {
           }
         } else if (msg.action === 'subscribe_journal') {
           state.wantsJournalUpdates = true;
-          primeJournalAggregatesFromDb(state.userId)
-            .then(() => runJournalPush(state.userId))
-            .catch((e) => logger.warn('Journal prime/push failed', { userId: state.userId, err: (e as Error)?.message }));
+          void runJournalPush(state.userId);
         } else if (msg.action === 'unsubscribe_journal') {
           state.wantsJournalUpdates = false;
         } else if (msg.action === 'account_delete_confirm') {

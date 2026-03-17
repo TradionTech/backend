@@ -56,8 +56,9 @@ export function mapTradeHistoryToAnalyzable(
   userId: string
 ): AnalyzableTrade | null {
   const exitRecord = exit || entry;
-  const timeOpen = entry.timeOpen;
-  const timeClose = exitRecord.timeClose || entry.timeClose;
+  // Sync job maps deal.time to timeOpen but does not set timeClose; use time when timeOpen/timeClose are null
+  const timeOpen = entry.timeOpen || entry.time;
+  const timeClose = exitRecord.timeClose || entry.timeClose || exitRecord.time;
 
   if (!timeOpen || !timeClose) {
     return null;

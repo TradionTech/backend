@@ -11,7 +11,7 @@ import { logger } from '../config/logger';
 import {
   createRedisPublisher,
   publishAccountUpdate,
-  type AccountUpdatePayload,
+  type EquityUpdateData,
 } from './accountUpdateBus';
 import { createSequelizeHistoryStorage } from '../services/brokers/sequelizeHistoryStorage';
 
@@ -28,12 +28,44 @@ interface ConnectionState {
 const connections = new Map<string, ConnectionState>();
 let publisher: Redis | null = null;
 
+const EQUITY_THROTTLE_MS = 500;
+
 function getPublisher(): Redis | null {
   if (!publisher) publisher = createRedisPublisher();
   return publisher;
 }
 
-function buildListener(metaapiAccountId: string): SynchronizationListener {
+function computeEquityFromTerminalState(connection: StreamingConnection): EquityUpdateData | null {
+  const terminalState = connection.terminalState;
+  const ai = terminalState?.accountInformation as Record<string, unknown> | undefined;
+  const positions = (terminalState?.positions ?? []) as Array<Record<string, unknown>>;
+  if (!ai || typeof ai.balance !== 'number') return null;
+  let equity = Number(ai.balance);
+  for (const p of positions) {
+    const up = p.unrealizedProfit;
+    if (typeof up === 'number') equity += up;
+  }
+  return {
+    equity,
+    balance: typeof ai.balance === 'number' ? ai.balance : undefined,
+    margin: typeof ai.margin === 'number' ? ai.margin : undefined,
+    freeMargin: typeof ai.freeMargin === 'number' ? ai.freeMargin : undefined,
+  };
+}
+
+function buildListener(metaapiAccountId: string, connection: StreamingConnection): SynchronizationListener {
+  let lastEquityPublishAt = 0;
+  function maybePublishEquity(): void {
+    const pub = getPublisher();
+    if (!pub) return;
+    const now = Date.now();
+    if (now - lastEquityPublishAt < EQUITY_THROTTLE_MS) return;
+    const data = computeEquityFromTerminalState(connection);
+    if (!data) return;
+    lastEquityPublishAt = now;
+    publishAccountUpdate(pub, { type: 'equity', accountId: metaapiAccountId, data });
+  }
+
   return {
     onConnected() {},
     onSynchronizationStarted() {},
@@ -41,8 +73,12 @@ function buildListener(metaapiAccountId: string): SynchronizationListener {
     onHealthStatus() {},
     onSymbolSpecificationUpdated() {},
     onSymbolSpecificationsUpdated() {},
-    onSymbolPriceUpdated() {},
-    onSymbolPricesUpdated() {},
+    onSymbolPriceUpdated() {
+      maybePublishEquity();
+    },
+    onSymbolPricesUpdated() {
+      maybePublishEquity();
+    },
     onAccountInformationUpdated(_instanceIndex: string, accountInformation: unknown) {
       const pub = getPublisher();
       if (!pub) return;
@@ -166,7 +202,7 @@ async function openConnection(metaapiAccountId: string): Promise<ConnectionState
     ? account.getStreamingConnection(historyStorage as any)
     : account.getStreamingConnection();
 
-  const listener = buildListener(metaapiAccountId);
+  const listener = buildListener(metaapiAccountId, connection);
   connection.addSynchronizationListener(listener);
 
   let lastErr: Error | null = null;
@@ -221,6 +257,10 @@ async function openConnection(metaapiAccountId: string): Promise<ConnectionState
         accountId: metaapiAccountId,
         data: terminalState.positions,
       });
+      const equityData = computeEquityFromTerminalState(connection);
+      if (equityData) {
+        publishAccountUpdate(pub, { type: 'equity', accountId: metaapiAccountId, data: equityData });
+      }
     }
     publishAccountUpdate(pub, { type: 'synchronized', accountId: metaapiAccountId });
   }

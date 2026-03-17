@@ -11,8 +11,17 @@ const CHANNEL_ACCOUNT_UPDATES_PREFIX = 'account:updates:';
 const CHANNEL_STREAMING_SUBSCRIBE = 'streaming:subscribe';
 const CHANNEL_STREAMING_UNSUBSCRIBE = 'streaming:unsubscribe';
 
+/** Calculated equity stream payload (balance + floating P/L), sent on price ticks when positions are open. */
+export interface EquityUpdateData {
+  equity: number;
+  balance?: number;
+  margin?: number;
+  freeMargin?: number;
+}
+
 export type AccountUpdatePayload =
   | { type: 'account_info'; accountId: string; data: Record<string, unknown> }
+  | { type: 'equity'; accountId: string; data: EquityUpdateData }
   | { type: 'positions'; accountId: string; data: unknown[] }
   | { type: 'orders'; accountId: string; data: unknown[] }
   | { type: 'deals'; accountId: string; data: unknown[] }

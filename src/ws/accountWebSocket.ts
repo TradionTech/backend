@@ -20,6 +20,15 @@ import {
   type AccountUpdatePayload,
 } from '../streaming/accountUpdateBus';
 import {
+  applyDeal,
+  setAccountPositionCount,
+  buildSummaryResponse,
+  buildPerformanceResponse,
+  isPrimed,
+  primeJournalAggregatesFromDb,
+  primeJournalAggregatesFromRest,
+} from '../streaming/journalAggregates';
+import {
   deleteAccountViaProvisioningApi,
   updateAccountViaProvisioningApi,
   type UpdateMetaApiAccountBody,
@@ -37,10 +46,97 @@ interface ClientState {
   allowedAccountIds: Set<string>;
   subscribedAccountIds: Set<string>;
   unsubFns: Map<string, () => void>;
+  wantsJournalUpdates: boolean;
 }
 
 const channelToClients = new Map<string, Set<WebSocket>>();
 const channelUnsubFns = new Map<string, () => void>();
+/** metaapiAccountId -> userId for resolving account updates to journal pushes */
+const accountIdToUserId = new Map<string, string>();
+/** userId -> Set of WebSockets for pushing journal updates */
+const userIdToClients = new Map<string, Set<WebSocket>>();
+
+const JOURNAL_PUSH_DEBOUNCE_MS = 2000;
+const journalPushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+async function resolveUserIdForAccount(accountId: string): Promise<string | null> {
+  const cached = accountIdToUserId.get(accountId);
+  if (cached) return cached;
+  const row = await MetaApiAccount.findOne({
+    where: { metaapiAccountId: accountId },
+    attributes: ['userId'],
+  });
+  const userId = row?.userId as string | undefined;
+  if (userId) accountIdToUserId.set(accountId, userId);
+  return userId ?? null;
+}
+
+function scheduleJournalPush(userId: string): void {
+  const existing = journalPushTimers.get(userId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    journalPushTimers.delete(userId);
+    void runJournalPush(userId);
+  }, JOURNAL_PUSH_DEBOUNCE_MS);
+  journalPushTimers.set(userId, timer);
+}
+
+async function runJournalPush(userId: string): Promise<void> {
+  const clients = userIdToClients.get(userId);
+  if (!clients?.size) return;
+
+  const wantJournal = Array.from(clients).some(
+    (c) => (c as WebSocket & { _state?: ClientState })._state?.wantsJournalUpdates
+  );
+  if (!wantJournal) return;
+
+  if (!isPrimed(userId)) {
+    const fromDb = await primeJournalAggregatesFromDb(userId);
+    if (!fromDb) {
+      await primeJournalAggregatesFromRest(userId);
+    }
+  }
+
+  const summary = buildSummaryResponse(userId);
+  const performance = buildPerformanceResponse(userId);
+  const summaryMsg = JSON.stringify({ type: 'journal_summary', data: summary });
+  const perfMsg = JSON.stringify({ type: 'journal_performance', data: performance });
+
+  for (const ws of clients) {
+    if (ws.readyState !== 1) continue;
+    const state = (ws as WebSocket & { _state?: ClientState })._state;
+    if (!state?.wantsJournalUpdates) continue;
+    ws.send(summaryMsg);
+    ws.send(perfMsg);
+  }
+}
+
+function onAccountUpdate(payload: AccountUpdatePayload, channel: string): void {
+  const accountId = payload.accountId;
+  const type = payload.type;
+
+  if (type === 'deals' && Array.isArray(payload.data)) {
+    resolveUserIdForAccount(accountId).then((userId) => {
+      if (!userId) return;
+      for (const deal of payload.data as Record<string, unknown>[]) {
+        applyDeal(userId, deal, accountId);
+      }
+      scheduleJournalPush(userId);
+    });
+  } else if (type === 'positions') {
+    const count = Array.isArray(payload.data) ? payload.data.length : 0;
+    resolveUserIdForAccount(accountId).then((userId) => {
+      if (!userId) return;
+      setAccountPositionCount(userId, accountId, count);
+      scheduleJournalPush(userId);
+    });
+  } else if (type === 'synchronized') {
+    resolveUserIdForAccount(accountId).then((userId) => {
+      if (!userId) return;
+      scheduleJournalPush(userId);
+    });
+  }
+}
 
 function getTokenFromRequest(url: string, headers: Record<string, string | string[] | undefined>): string | null {
   try {
@@ -114,8 +210,16 @@ export function attachAccountWebSocket(): AccountWebSocketRoute | null {
       allowedAccountIds,
       subscribedAccountIds: new Set(),
       unsubFns: new Map(),
+      wantsJournalUpdates: false,
     };
     (ws as WebSocket & { _state?: ClientState })._state = state;
+
+    let clientsForUser = userIdToClients.get(state.userId);
+    if (!clientsForUser) {
+      clientsForUser = new Set();
+      userIdToClients.set(state.userId, clientsForUser);
+    }
+    clientsForUser.add(ws);
 
     ws.send(JSON.stringify({ type: 'ready', message: 'Connected. Send subscribe with accountIds.' }));
 
@@ -128,6 +232,7 @@ export function attachAccountWebSocket(): AccountWebSocketRoute | null {
             if (!state.allowedAccountIds.has(metaapiAccountId)) continue;
             if (state.subscribedAccountIds.has(metaapiAccountId)) continue;
             state.subscribedAccountIds.add(metaapiAccountId);
+            accountIdToUserId.set(metaapiAccountId, state.userId);
             publishStreamingSubscribe(publisher, { metaapiAccountId, userId: state.userId });
             const channel = getAccountUpdatesChannel(metaapiAccountId);
             let clients = channelToClients.get(channel);
@@ -135,6 +240,7 @@ export function attachAccountWebSocket(): AccountWebSocketRoute | null {
               clients = new Set();
               channelToClients.set(channel, clients);
               const unsubRedis = subscribeToAccountUpdates(subscriber, metaapiAccountId, (payload: AccountUpdatePayload) => {
+                onAccountUpdate(payload, channel);
                 const data = JSON.stringify(payload);
                 const set = channelToClients.get(channel);
                 set?.forEach((c) => {
@@ -217,6 +323,13 @@ export function attachAccountWebSocket(): AccountWebSocketRoute | null {
               })
             );
           }
+        } else if (msg.action === 'subscribe_journal') {
+          state.wantsJournalUpdates = true;
+          primeJournalAggregatesFromDb(state.userId)
+            .then(() => runJournalPush(state.userId))
+            .catch((e) => logger.warn('Journal prime/push failed', { userId: state.userId, err: (e as Error)?.message }));
+        } else if (msg.action === 'unsubscribe_journal') {
+          state.wantsJournalUpdates = false;
         } else if (msg.action === 'account_delete_confirm') {
           const metaapiAccountId = String(msg.accountId ?? '').trim();
           if (!metaapiAccountId || !state.allowedAccountIds.has(metaapiAccountId)) {
@@ -248,6 +361,11 @@ export function attachAccountWebSocket(): AccountWebSocketRoute | null {
     ws.on('close', () => {
       state.unsubFns.forEach((fn) => fn());
       state.unsubFns.clear();
+      const set = userIdToClients.get(state.userId);
+      if (set) {
+        set.delete(ws);
+        if (set.size === 0) userIdToClients.delete(state.userId);
+      }
     });
   });
 

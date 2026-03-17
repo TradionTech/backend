@@ -91,6 +91,7 @@ const EXIT_ENTRY_TYPES = new Set(['DEAL_ENTRY_OUT', 'DEAL_ENTRY_OUT_BY']);
  * closed trade; other deals are ignored. Multiple exit deals for the same position (e.g. main
  * + commission/swap) are deduped by positionId: only the first within RECENT_EXIT_DEDUPE_MS
  * counts as one trade; later ones only add PnL.
+ * Deals that closed before primedAt are skipped (already included in the prime).
  */
 export function applyDeal(
   userId: string,
@@ -101,6 +102,18 @@ export function applyDeal(
   if (!EXIT_ENTRY_TYPES.has(entryType)) return;
 
   const state = getOrCreateAggregates(userId);
+
+  if (state.primedAt != null) {
+    const dealTimeMs =
+      deal.time == null
+        ? 0
+        : typeof deal.time === 'string'
+          ? new Date(deal.time).getTime()
+          : Number(deal.time);
+    if (dealTimeMs < state.primedAt) return;
+    if (deal.time == null) return;
+  }
+
   if (!state.recentExitByPositionId) state.recentExitByPositionId = new Map();
   const profit = Number(deal.profit ?? 0);
   const commission = Number(deal.commission ?? 0);

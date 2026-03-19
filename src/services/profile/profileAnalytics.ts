@@ -1,4 +1,4 @@
-import type { AnalyzableTrade, UserProfileMetrics } from './profileTypes.js';
+import type { AnalyzableTrade, UserProfileMetrics } from './profileTypes';
 
 /**
  * Compute the typical risk per trade as a percentage of account equity.

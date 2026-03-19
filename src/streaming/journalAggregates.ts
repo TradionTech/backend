@@ -4,19 +4,19 @@
  * without re-querying full history.
  */
 
-import { MetaApiAccount } from '../db/models/MetaApiAccount.js';
-import { TradeHistory } from '../db/models/TradeHistory.js';
-import { TradingPosition } from '../db/models/TradingPosition.js';
-import { mapTradeHistoryToAnalyzable } from '../services/journal/journalAnalytics.js';
+import { MetaApiAccount } from '../db/models/MetaApiAccount';
+import { TradeHistory } from '../db/models/TradeHistory';
+import { TradingPosition } from '../db/models/TradingPosition';
+import { mapTradeHistoryToAnalyzable } from '../services/journal/journalAnalytics';
 import type {
   JournalSummaryResponse,
   JournalPerformanceResponse,
-} from '../services/journal/journalDashboardService.js';
-import { journalDashboardService } from '../services/journal/journalDashboardService.js';
-import type { AnalyzableTrade } from '../services/journal/journalTypes.js';
-import { journalService } from '../services/journal/journalService.js';
-import { getOpenPositions } from '../services/brokers/metaapi.js';
-import { logger } from '../config/logger.js';
+} from '../services/journal/journalDashboardService';
+import { journalDashboardService } from '../services/journal/journalDashboardService';
+import type { AnalyzableTrade } from '../services/journal/journalTypes';
+import { journalService } from '../services/journal/journalService';
+import { getOpenPositions } from '../services/brokers/metaapi';
+import { logger } from '../config/logger';
 
 const PNL_LIST_CAP = 10_000;
 /** Within this window we count at most one trade per positionId; further exit deals for same position only add PnL */

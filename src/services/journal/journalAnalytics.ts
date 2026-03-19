@@ -1,7 +1,7 @@
-import type { TradeHistory } from '../../db/models/TradeHistory.js';
-import type { AnalyzableTrade, JournalStatsBucket, JournalStatsBucketKey, BehaviourPattern } from './journalTypes.js';
-import type { UserProfileMetrics } from '../profile/profileTypes.js';
-import type { MetaApiMetatraderDeal } from '../../types/metaapi.js';
+import type { TradeHistory } from '../../db/models/TradeHistory';
+import type { AnalyzableTrade, JournalStatsBucket, JournalStatsBucketKey, BehaviourPattern } from './journalTypes';
+import type { UserProfileMetrics } from '../profile/profileTypes';
+import type { MetaApiMetatraderDeal } from '../../types/metaapi';
 
 /**
  * Configuration thresholds for pattern detection.

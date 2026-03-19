@@ -57,6 +57,13 @@ Trading cryptocurrencies carries significant risk. Past performance doesn't guar
       expect(result.reason).toBeUndefined();
     });
 
+    it('should not flag "no risk" when referring to formatting/system constraints', () => {
+      const safeContent =
+        'The greeting was omitted to comply with the JSON-only rule. There is no risk related to this formatting rule; it is a deterministic requirement of the system.';
+      const result = guard.checkResponse(safeContent);
+      expect(result.isSafe).toBe(true);
+    });
+
     it('should not flag "all in" when it is a substring (e.g. "All information")', () => {
       const safeContent =
         '- **Source concentration:** All information originates from a single provider, so the view may be biased toward that source\'s coverage.';

@@ -1,6 +1,6 @@
-import { journalService } from './journalService.js';
-import { computeWinRate, computeMaxDrawdownPct } from './journalAnalytics.js';
-import { logger } from '../../config/logger.js';
+import { journalService } from './journalService';
+import { computeWinRate, computeMaxDrawdownPct } from './journalAnalytics';
+import { logger } from '../../config/logger';
 
 const DEFAULT_WINDOW_YEARS = 2;
 const DEFAULT_WINDOW_MS = DEFAULT_WINDOW_YEARS * 365 * 24 * 60 * 60 * 1000;

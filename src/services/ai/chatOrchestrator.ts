@@ -65,12 +65,69 @@ export interface ChatResponse {
  * Handles intent detection, conversation continuity, prompt building, LLM calls, and safety checks.
  */
 export class ChatOrchestrator {
+  private shouldUseJsonOutputForTurn(
+    intentResult: Awaited<ReturnType<typeof intentDetector.detectIntent>>
+  ): boolean {
+    // Never force JSON for smalltalk.
+    if (
+      intentResult.primaryIntent === 'smalltalk' ||
+      intentResult.intents.some((i) => i.intent === 'smalltalk')
+    ) {
+      return false;
+    }
+
+    // JSON helps parsing for longer-form educational/analysis style replies, but it's overkill for short clarifications.
+    if (intentResult.primaryIntent === 'clarification') {
+      return false;
+    }
+
+    return true;
+  }
+
+  private shouldIncludeEconomicCalendar(
+    intentResult: Awaited<ReturnType<typeof intentDetector.detectIntent>>,
+    message: string
+  ): boolean {
+    // Never include calendar for smalltalk.
+    if (intentResult.primaryIntent === 'smalltalk') return false;
+
+    // Calendar is only useful when user is asking about markets, analysis, validation, or education around events.
+    const intents = intentResult.intents.map((i) => i.intent);
+    const hasRelevantIntent = intents.some(
+      (i) => i === 'analysis' || i === 'validation' || i === 'education' || i === 'risk_evaluation'
+    );
+    if (!hasRelevantIntent) return false;
+
+    // Require some market-ish cue in the message to avoid injecting events into generic education.
+    return this.messageContainsMarketReference(message);
+  }
+
+  private async completeChatWithEmptyRetry(
+    chatClient: ReturnType<typeof getChatLLM>,
+    options: Parameters<ReturnType<typeof getChatLLM>['completeChat']>[0]
+  ): Promise<Awaited<ReturnType<ReturnType<typeof getChatLLM>['completeChat']>>> {
+    const first = await chatClient.completeChat(options);
+    if (first.content && first.content.trim().length > 0) return first;
+
+    logger.warn('LLM returned empty content, retrying once', {
+      modelId: options.modelId,
+      finishReason: first.finishReason,
+      hasResponseFormat: !!options.responseFormat,
+      messageCount: options.messages?.length,
+      response: first,
+    });
+
+    // Retry once, removing responseFormat as some providers may emit non-content in strict JSON mode.
+    const { responseFormat, ...rest } = options;
+    const second = await chatClient.completeChat({ ...rest, responseFormat: undefined });
+    return second;
+  }
   /**
    * Process a chat message through the complete pipeline:
    * 1. Detect intent and user level
    * 2. Retrieve conversation history
    * 3. Build system prompt
-   * 4. Call Groq Compound
+   * 4. Call chat model provider
    * 5. Parse and structure response
    * 6. Apply safety checks
    * 7. Save messages and return response
@@ -94,9 +151,55 @@ export class ChatOrchestrator {
         message,
         session.id,
         conversationHistory,
-        metadata
+        metadata,
+        modelId
       );
       logger.info('Intent result', { intentResult: intentResult, message: message });
+
+      // Smalltalk: lightweight path (no context fetch, no JSON forcing, no calendar)
+      if (intentResult.primaryIntent === 'smalltalk') {
+        const systemPrompt = promptBuilder.buildSystemPrompt({
+          userLevel: intentResult.user_level,
+          intents: intentResult.intents.map((i) => i.intent),
+          primaryIntent: intentResult.primaryIntent,
+          marketContext: undefined,
+          riskContext: null,
+          chartContext: null,
+          sentimentContext: null,
+          economicCalendarContext: null,
+          useJsonOutput: false,
+        });
+
+        const messages = promptBuilder.buildMessages(systemPrompt, conversationHistory, message);
+
+        await conversationStore.saveMessage(session.id, 'user', message);
+
+        const chatClient = getChatLLM(modelId);
+        const llmResponse = await this.completeChatWithEmptyRetry(chatClient, {
+          messages,
+          modelId,
+          allowedTools: [],
+          maxTokens: 400,
+          temperature: 0.7,
+          responseFormat: undefined,
+        });
+
+        const responseContent = llmResponse.content?.trim() || 'Hi! How can I help?';
+        await conversationStore.saveMessage(session.id, 'assistant', responseContent);
+
+        const sections = this.parseStructuredResponse(responseContent);
+        return {
+          conversationId: session.id,
+          message: responseContent,
+          sections,
+          intents: intentResult.intents.map((i) => i.intent),
+          primaryIntent: intentResult.primaryIntent,
+          user_level: intentResult.user_level,
+          low_confidence: false,
+          response_id: llmResponse.id,
+          safety_fallback: false,
+        };
+      }
 
       // Step 3.5: Handle journal coaching requests (bypass normal chat flow)
       if (intentResult.isJournalRelated && intentResult.coachingIntent) {
@@ -270,33 +373,38 @@ export class ChatOrchestrator {
       // Step 4.8: Economic calendar context (next 7 days; optional FX country filter)
       let economicCalendarContext = null;
       try {
-        const now = new Date();
-        const to = new Date(now.getTime() + 7 * 86400000);
-        let countryCodes: string[] | undefined;
-        if (marketContext?.context?.instrument?.assetClass === 'FX') {
-          const base = marketContext.context.instrument.base;
-          const quote = marketContext.context.instrument.quote;
-          const currencyToCountry: Record<string, string> = {
-            USD: 'US',
-            EUR: 'EU',
-            GBP: 'UK',
-            JPY: 'JP',
-            CHF: 'CH',
-            AUD: 'AU',
-            CAD: 'CA',
-            NZD: 'NZ',
-          };
-          const codes: string[] = [];
-          if (base && currencyToCountry[base]) codes.push(currencyToCountry[base]);
-          if (quote && currencyToCountry[quote]) codes.push(currencyToCountry[quote]);
-          if (codes.length) countryCodes = [...new Set(codes)];
+        const includeCalendar = this.shouldIncludeEconomicCalendar(intentResult, message);
+        if (!includeCalendar) {
+          economicCalendarContext = null;
+        } else {
+          const now = new Date();
+          const to = new Date(now.getTime() + 7 * 86400000);
+          let countryCodes: string[] | undefined;
+          if (marketContext?.context?.instrument?.assetClass === 'FX') {
+            const base = marketContext.context.instrument.base;
+            const quote = marketContext.context.instrument.quote;
+            const currencyToCountry: Record<string, string> = {
+              USD: 'US',
+              EUR: 'EU',
+              GBP: 'UK',
+              JPY: 'JP',
+              CHF: 'CH',
+              AUD: 'AU',
+              CAD: 'CA',
+              NZD: 'NZ',
+            };
+            const codes: string[] = [];
+            if (base && currencyToCountry[base]) codes.push(currencyToCountry[base]);
+            if (quote && currencyToCountry[quote]) codes.push(currencyToCountry[quote]);
+            if (codes.length) countryCodes = [...new Set(codes)];
+          }
+          economicCalendarContext = await economicCalendarService.getEventsForChat({
+            from: now,
+            to,
+            countryCodes,
+            limit: 50,
+          });
         }
-        economicCalendarContext = await economicCalendarService.getEventsForChat({
-          from: now,
-          to,
-          countryCodes,
-          limit: 50,
-        });
       } catch (err) {
         logger.warn('Failed to get economic calendar context', {
           error: (err as Error).message,
@@ -315,6 +423,7 @@ export class ChatOrchestrator {
         (i) => i.intent === 'sentiment_snapshot'
       );
       const useJsonOutput =
+        this.shouldUseJsonOutputForTurn(intentResult) &&
         !(riskContext && hasRiskIntentForPrompt) &&
         !(chartContext && hasChartIntentForPrompt) &&
         !(sentimentContext && hasSentimentIntentForPrompt);
@@ -334,15 +443,15 @@ export class ChatOrchestrator {
         systemPrompt = systemPromptPrefix + systemPrompt;
       }
 
-      // Step 6: Format messages for Groq API
+      // Step 6: Format messages for chat completion API
       const messages = promptBuilder.buildMessages(systemPrompt, conversationHistory, message);
 
       // Step 7: Save user message
       const userMessageRecord = await conversationStore.saveMessage(session.id, 'user', message);
       const userMessageId = userMessageRecord.id;
 
-      // Step 8: Call Groq Compound (streaming or one-shot; with 413 retry via summarized context)
-      logger.debug('Calling Groq Compound', {
+      // Step 8: Call chat model provider (streaming or one-shot; with 413 retry via summarized context)
+      logger.debug('Calling chat model provider', {
         conversationId: session.id,
         intents: intentResult.intents
           .map((i) => `${i.intent}(${i.confidence.toFixed(2)})`)
@@ -356,9 +465,9 @@ export class ChatOrchestrator {
       streamCallbacks?.onProgress?.('generating');
 
       const chatClient = getChatLLM(modelId);
-      let groqResponse: Awaited<ReturnType<typeof chatClient.completeChat>>;
+      let llmResponse: Awaited<ReturnType<typeof chatClient.completeChat>>;
       if (streamCallbacks?.onChunk) {
-        groqResponse = await chatClient.completeChatStream(
+        llmResponse = await chatClient.completeChatStream(
           {
             messages,
             modelId,
@@ -371,7 +480,7 @@ export class ChatOrchestrator {
         );
       } else {
         try {
-          groqResponse = await chatClient.completeChat({
+          llmResponse = await this.completeChatWithEmptyRetry(chatClient, {
             messages,
             modelId,
             allowedTools: ['web_search', 'code_interpreter'],
@@ -395,7 +504,7 @@ export class ChatOrchestrator {
               message,
               modelId
             );
-            groqResponse = {
+            llmResponse = {
               id: retryResult.id,
               content: retryResult.content,
               finishReason: 'stop',
@@ -407,7 +516,13 @@ export class ChatOrchestrator {
         }
       }
 
-      let responseContent = groqResponse.content;
+      let responseContent = llmResponse.content;
+      if (!responseContent || responseContent.trim().length === 0) {
+        logger.debug('No response content from LLM', { llmResponse });
+        // Final safety net: never persist empty assistant messages.
+        responseContent =
+          'I didn’t generate a response that time. Could you rephrase your question?';
+      }
       let safetyFallback = false;
 
       streamCallbacks?.onProgress?.('safety_check');
@@ -502,7 +617,7 @@ export class ChatOrchestrator {
         primaryIntent: intentResult.primaryIntent,
         user_level: intentResult.user_level,
         low_confidence: lowConfidence,
-        response_id: groqResponse.id,
+        response_id: llmResponse.id,
         safety_fallback: safetyFallback,
       };
       return result;
@@ -618,7 +733,7 @@ Respond to the user's message using the condensed context above. If the context 
     ];
 
     const chatClient = getChatLLM(modelId);
-    const groqResponse = await chatClient.completeChat({
+    const llmResponse = await chatClient.completeChat({
       messages: retryMessages,
       modelId,
       maxTokens: 2000,
@@ -626,9 +741,9 @@ Respond to the user's message using the condensed context above. If the context 
     });
 
     return {
-      id: groqResponse.id,
-      content: groqResponse.content,
-      usage: groqResponse.usage,
+      id: llmResponse.id,
+      content: llmResponse.content,
+      usage: llmResponse.usage,
     };
   }
 

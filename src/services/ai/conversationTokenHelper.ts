@@ -18,7 +18,7 @@ function getTokenizer(): { encode: (text: string) => number[] } | undefined {
 
 /**
  * Estimate token count for a string.
- * Uses gpt-tokenizer when available (OpenAI/Groq-style BPE); otherwise falls back to char-based heuristic
+ * Uses gpt-tokenizer when available (OpenAI-style BPE); otherwise falls back to char-based heuristic
  * using CONVERSATION_CHARS_PER_TOKEN (default 4).
  */
 export function estimateTokens(text: string): number {

@@ -5,6 +5,7 @@ import type { EconomicCalendarContextForLLM } from '../economicCalendar/economic
 
 export type UserLevel = 'novice' | 'intermediate' | 'advanced';
 export type Intent =
+  | 'smalltalk'
   | 'education'
   | 'analysis'
   | 'clarification'
@@ -61,6 +62,11 @@ export class PromptBuilder {
 
     // Check if sentiment snapshot intent
     const hasSentimentIntent = intents.some((intent) => intent === 'sentiment_snapshot');
+
+    // Smalltalk intent: lightweight, no structured output requirement
+    if (intents.some((intent) => intent === 'smalltalk') || primaryIntent === 'smalltalk') {
+      return this.buildSmalltalkPrompt();
+    }
 
     // If risk-related intent, use risk-specific prompt
     if (riskContext && hasRiskIntent) {
@@ -124,6 +130,12 @@ ${economicCalendarSection}
 COMPANION STYLE: When appropriate, offer one optional follow-up or "You might also ask..." to support continued learning. Keep it brief and relevant; do not be pushy.
 
 Remember: Your goal is education and analysis, not providing personalized financial advice or definitive predictions. Always prioritize user safety and learning.`;
+  }
+
+  private buildSmalltalkPrompt(): string {
+    return `You are TradionAI, a friendly trading companion. The user is making casual smalltalk (greetings, thanks, "how are you", etc.).
+
+Respond naturally in 1-2 short sentences. Do NOT output JSON. Do NOT include the economic calendar. Do NOT include market analysis unless the user explicitly asks. Offer a simple "How can I help?" style follow-up.`;
   }
 
   /**
@@ -287,6 +299,7 @@ Example shape: {"facts":"...","interpretation":"...","risk_and_uncertainty":"...
 
     const intentNames = intents.map((intent) => {
       const names: Record<Intent, string> = {
+        smalltalk: 'smalltalk',
         education: 'education',
         analysis: 'analysis',
         clarification: 'clarification',

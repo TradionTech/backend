@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { getAuth } from '@clerk/express';
-import { recomputeUserProfileMetrics, getUserProfileMetrics } from '../services/profile/profileService.js';
+import { recomputeUserProfileMetrics, getUserProfileMetrics } from '../services/profile/profileService';
 
 export const profileController = {
   recomputeProfileHandler: async (

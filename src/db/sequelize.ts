@@ -1,21 +1,21 @@
 import { Sequelize } from 'sequelize';
-import { env } from '../config/env.js';
-import { initUser } from './models/User.js';
-import { initChatSession } from './models/ChatSession.js';
-import { initChatMessage } from './models/ChatMessage.js';
-import { initRiskCalculation } from './models/RiskCalculation.js';
-import { initJournalEntry } from './models/JournalEntry.js';
-import { initSentimentScore } from './models/SentimentScore.js';
-import { initPayment } from './models/Payment.js';
-import { initSubscription } from './models/Subscription.js';
-import { initUsageStat } from './models/UsageStat.js';
-import { initMetaApiAccount } from './models/MetaApiAccount.js';
-import { initTradingPosition } from './models/TradingPosition.js';
-import { initTradeHistory } from './models/TradeHistory.js';
-import { initAccountEquitySnapshot } from './models/AccountEquitySnapshot.js';
-import { initUserProfileMetrics } from './models/UserProfileMetrics.js';
-import { initChartUpload } from './models/ChartUpload.js';
-import { initEconomicEvent } from './models/EconomicEvent.js';
+import { env } from '../config/env';
+import { initUser } from './models/User';
+import { initChatSession } from './models/ChatSession';
+import { initChatMessage } from './models/ChatMessage';
+import { initRiskCalculation } from './models/RiskCalculation';
+import { initJournalEntry } from './models/JournalEntry';
+import { initSentimentScore } from './models/SentimentScore';
+import { initPayment } from './models/Payment';
+import { initSubscription } from './models/Subscription';
+import { initUsageStat } from './models/UsageStat';
+import { initMetaApiAccount } from './models/MetaApiAccount';
+import { initTradingPosition } from './models/TradingPosition';
+import { initTradeHistory } from './models/TradeHistory';
+import { initAccountEquitySnapshot } from './models/AccountEquitySnapshot';
+import { initUserProfileMetrics } from './models/UserProfileMetrics';
+import { initChartUpload } from './models/ChartUpload';
+import { initEconomicEvent } from './models/EconomicEvent';
 
 export const sequelize = new Sequelize(env.DATABASE_URL, {
   dialect: 'postgres',

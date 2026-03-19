@@ -1,7 +1,7 @@
 import type {
   AnalyzableTrade as BaseAnalyzableTrade,
   UserProfileMetrics,
-} from '../profile/profileTypes.js';
+} from '../profile/profileTypes';
 
 /**
  * Coaching intent types that determine the focus and analysis window for journal coaching.

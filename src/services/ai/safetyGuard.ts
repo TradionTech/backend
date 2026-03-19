@@ -36,6 +36,26 @@ function getMatchContext(content: string, pattern: RegExp): { matchedPhrase: str
  * When a pattern matches, a two-step check (rule-based) can reclassify as educational.
  */
 export class SafetyGuard {
+  private isNonFinancialContext(containingSentence: string): boolean {
+    const lower = containingSentence.toLowerCase();
+    const nonFinancialCues = [
+      'json',
+      'json-only',
+      'formatting',
+      'schema',
+      'system prompt',
+      'system',
+      'api',
+      'deterministic',
+      'rule',
+      'parser',
+      'response format',
+      'structured data',
+      'backend',
+    ];
+    return nonFinancialCues.some((cue) => lower.includes(cue));
+  }
+
   /**
    * Rule-based two-step: if the matched sentence looks educational (e.g. "you should sell when your stop is hit"),
    * treat as safe and do not replace.
@@ -57,6 +77,8 @@ export class SafetyGuard {
       'in theory',
       'as a rule',
       'under those circumstances',
+      'formatting rule',
+      'response format',
     ];
     return educationalCues.some((cue) => lower.includes(cue));
   }
@@ -154,6 +176,10 @@ export class SafetyGuard {
       if (match) {
         const { matchedPhrase, containingSentence } = getMatchContext(content, pattern);
         if (this.isLikelyEducational(containingSentence)) continue;
+        // Avoid false positives where "no risk" refers to non-financial/system constraints.
+        if (matchedPhrase.toLowerCase() === 'no risk' && this.isNonFinancialContext(containingSentence)) {
+          continue;
+        }
         logger.warn('Safety guard triggered: reckless behavior encouragement detected', {
           pattern: pattern.toString(),
           matchedPhrase,

@@ -1,12 +1,12 @@
-import { journalService } from '../journal/journalService.js';
-import { promptBuilder } from './promptBuilder.js';
-import { getChatLLM } from './llm/chatLLM.js';
-import type { GroqMessage } from './groqCompoundClient.js';
-import { conversationStore } from './conversationStore.js';
-import { trimHistoryToTokenBudget } from './conversationTokenHelper.js';
-import { env } from '../../config/env.js';
-import type { CoachingIntent, JournalContextForLLM } from '../journal/journalTypes.js';
-import { logger } from '../../config/logger.js';
+import { journalService } from '../journal/journalService';
+import { promptBuilder } from './promptBuilder';
+import { getChatLLM } from './llm/chatLLM';
+import type { GroqMessage } from './groqCompoundClient';
+import { conversationStore } from './conversationStore';
+import { trimHistoryToTokenBudget } from './conversationTokenHelper';
+import { env } from '../../config/env';
+import type { CoachingIntent, JournalContextForLLM } from '../journal/journalTypes';
+import { logger } from '../../config/logger';
 
 /**
  * Configuration for coaching intent to analysis window mapping.

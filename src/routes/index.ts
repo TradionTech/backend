@@ -7,8 +7,8 @@ import billingRoutes from './billing.routes';
 import adminRoutes from './admin.routes';
 import accountRoutes from './account.routes';
 import usersRoutes from './users.routes';
-import profileRoutes from './profile.routes.js';
-import chartRoutes from './chart.routes.js';
+import profileRoutes from './profile.routes';
+import chartRoutes from './chart.routes';
 import authRoutes from './auth.routes';
 
 const router = Router();

@@ -18,6 +18,7 @@ export type GroqChatResponse = ChatCompletionResult;
 export interface GroqIntentResponse {
   intents: Array<{
     intent:
+      | 'smalltalk'
       | 'education'
       | 'analysis'
       | 'clarification'
@@ -34,6 +35,7 @@ export interface GroqIntentResponse {
     confidence: number; // 0-1
   }>;
   primaryIntent:
+    | 'smalltalk'
     | 'education'
     | 'analysis'
     | 'clarification'
@@ -352,6 +354,7 @@ export class GroqCompoundClient implements IChatLLMClient {
     const systemPrompt = `You are an intent classifier for a trading education platform. Analyze the user's message and conversation context to determine:
 
 1. ALL Intents detected in the message (array of intents with confidence scores):
+   - smalltalk: Greetings, thanks, casual check-ins ("hello", "how are you", etc.) with no trading request
    - education: User wants to learn about trading concepts, strategies, or markets
    - analysis: User wants analysis of a specific market, instrument, or situation
    - clarification: User is asking for clarification on a previous response
@@ -438,6 +441,7 @@ If only one intent is detected, return an array with a single element. The prima
 
       // Validate and normalize intents array
       const validIntents = [
+        'smalltalk',
         'education',
         'analysis',
         'clarification',

@@ -33,6 +33,78 @@ describe('ChatOrchestrator', () => {
   });
 
   describe('processMessage', () => {
+    it('should handle smalltalk with a lightweight response (no JSON mode)', async () => {
+      mockedConversationStore.getOrCreateConversation.mockResolvedValueOnce(
+        mockSession as ChatSession
+      );
+      mockedConversationStore.getRecentMessages.mockResolvedValueOnce([]);
+      mockedIntentDetector.detectIntent.mockResolvedValueOnce({
+        intents: [{ intent: 'smalltalk', confidence: 0.95 }],
+        primaryIntent: 'smalltalk',
+        user_level: 'intermediate',
+        isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
+      } as any);
+
+      mockedGroqClient.completeChat.mockResolvedValueOnce({
+        id: 'response-hello',
+        content: 'Hi there! How can I help?',
+        finishReason: 'stop',
+      });
+      mockedConversationStore.saveMessage.mockResolvedValue({} as ChatMessage);
+
+      const result = await orchestrator.processMessage({
+        userId: 'user-123',
+        message: 'hello',
+      });
+
+      expect(result.primaryIntent).toBe('smalltalk');
+      expect(result.message.length).toBeGreaterThan(0);
+
+      const groqCall = mockedGroqClient.completeChat.mock.calls[0][0];
+      expect(groqCall.responseFormat).toBeUndefined();
+      expect(mockedMarketContextService.getContext).not.toHaveBeenCalled();
+    });
+
+    it('should retry once if LLM returns empty content', async () => {
+      mockedConversationStore.getOrCreateConversation.mockResolvedValueOnce(
+        mockSession as ChatSession
+      );
+      mockedConversationStore.getRecentMessages.mockResolvedValueOnce([]);
+      mockedIntentDetector.detectIntent.mockResolvedValueOnce({
+        intents: [{ intent: 'clarification', confidence: 0.9 }],
+        primaryIntent: 'clarification',
+        user_level: 'intermediate',
+        isRiskRelated: false,
+        isChartRelated: false,
+        isJournalRelated: false,
+        isSentimentRelated: false,
+      });
+
+      mockedGroqClient.completeChat
+        .mockResolvedValueOnce({
+          id: 'response-empty',
+          content: '',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          id: 'response-retry',
+          content: 'Sure — what would you like me to clarify?',
+          finishReason: 'stop',
+        });
+
+      mockedConversationStore.saveMessage.mockResolvedValue({} as ChatMessage);
+
+      const result = await orchestrator.processMessage({
+        userId: 'user-123',
+        message: 'how are you',
+      });
+
+      expect(result.message).toContain('clarify');
+      expect(mockedGroqClient.completeChat).toHaveBeenCalledTimes(2);
+    });
     it('should process a message and return structured response', async () => {
       const mockResponse = `**Facts:**
 Bitcoin is a decentralized cryptocurrency.

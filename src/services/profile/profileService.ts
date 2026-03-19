@@ -1,14 +1,14 @@
 import { Op } from 'sequelize';
-import { TradeHistory } from '../../db/models/TradeHistory.js';
-import { MetaApiAccount } from '../../db/models/MetaApiAccount.js';
-import { AccountEquitySnapshot } from '../../db/models/AccountEquitySnapshot.js';
-import { UserProfileMetrics } from '../../db/models/UserProfileMetrics.js';
-import { computeUserProfileMetricsFromTrades } from './profileAnalytics.js';
+import { TradeHistory } from '../../db/models/TradeHistory';
+import { MetaApiAccount } from '../../db/models/MetaApiAccount';
+import { AccountEquitySnapshot } from '../../db/models/AccountEquitySnapshot';
+import { UserProfileMetrics } from '../../db/models/UserProfileMetrics';
+import { computeUserProfileMetricsFromTrades } from './profileAnalytics';
 import type {
   AnalyzableTrade,
   UserProfileMetrics as UserProfileMetricsType,
   UserProfileRecomputeOptions,
-} from './profileTypes.js';
+} from './profileTypes';
 
 /**
  * Reconstruct complete trades from TradeHistory deals.

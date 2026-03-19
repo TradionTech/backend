@@ -1,7 +1,7 @@
-import { JournalEntry } from '../../db/models/JournalEntry.js';
-import { MetaApiAccount } from '../../db/models/MetaApiAccount.js';
-import { getUserProfileMetrics } from '../profile/profileService.js';
-import { getHistoryDealsByTimeRange, getOpenPositions } from '../brokers/metaapi.js';
+import { JournalEntry } from '../../db/models/JournalEntry';
+import { MetaApiAccount } from '../../db/models/MetaApiAccount';
+import { getUserProfileMetrics } from '../profile/profileService';
+import { getHistoryDealsByTimeRange, getOpenPositions } from '../brokers/metaapi';
 import {
   mapMetaApiDealPairToAnalyzable,
   computeWinRate,
@@ -11,8 +11,8 @@ import {
   computeMaxDrawdownPct,
   bucketTrades,
   detectBehaviourPatterns,
-} from './journalAnalytics.js';
-import type { MetaApiMetatraderDeal } from '../../types/metaapi.js';
+} from './journalAnalytics';
+import type { MetaApiMetatraderDeal } from '../../types/metaapi';
 import type {
   JournalAnalysisRequest,
   JournalContextForLLM,
@@ -20,7 +20,7 @@ import type {
   JournalDashboardPerformance,
   AnalyzableTrade,
   JournalStatsBucket,
-} from './journalTypes.js';
+} from './journalTypes';
 
 /**
  * Default configuration for journal analysis.

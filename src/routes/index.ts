@@ -10,6 +10,7 @@ import usersRoutes from './users.routes';
 import profileRoutes from './profile.routes';
 import chartRoutes from './chart.routes';
 import authRoutes from './auth.routes';
+import signalRoutes from './signal.routes';
 
 const router = Router();
 
@@ -24,5 +25,6 @@ router.use('/users', usersRoutes);
 router.use('/profiles', profileRoutes);
 router.use('/charts', chartRoutes);
 router.use('/auth', authRoutes);
+router.use('/confirm-signal', signalRoutes);
 
 export default router;

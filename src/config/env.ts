@@ -114,6 +114,14 @@ export const env = {
   /** Overall chat request timeout in ms (e.g. 55000). On timeout return 504. */
   CHAT_REQUEST_TIMEOUT_MS: parseInt(process.env.CHAT_REQUEST_TIMEOUT_MS ?? '55000', 10),
 
+  // Signal confirmer (Python FastAPI)
+  // Frontend calls the Node monolith; monolith forwards to the Python service.
+  SIGNAL_CONFIRMER_BASE_URL: process.env.SIGNAL_CONFIRMER_BASE_URL ?? '',
+  // Path on the Python service (keep /confirm-signal for backward compatibility)
+  SIGNAL_CONFIRMER_ENDPOINT: process.env.SIGNAL_CONFIRMER_ENDPOINT ?? '/confirm-signal',
+  // Must stay within the 5s end-to-end budget for production usage.
+  SIGNAL_CONFIRMER_TIMEOUT_MS: parseInt(process.env.SIGNAL_CONFIRMER_TIMEOUT_MS ?? '4500', 10),
+
   // Storage (S3/R2)
   STORAGE_PROVIDER: process.env.STORAGE_PROVIDER ?? 's3',
   S3_ENDPOINT: process.env.S3_ENDPOINT ?? '',

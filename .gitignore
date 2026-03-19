@@ -7,3 +7,4 @@ dist
 /postman/
 
 .env
+repomix-output.xml

@@ -2,8 +2,65 @@ import { getChatLLM } from '../ai/llm/chatLLM';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import type { MarketContextRequest } from '../../types/market';
-import { mapTimeframeHint } from './timeframeMapper';
 import { inferAssetClass } from './assetClassInferrer';
+
+/** Common FX pairs when written without separator (substring scan on letters-only query). */
+const KNOWN_FX_SIX = new Set([
+  'EURUSD',
+  'GBPUSD',
+  'USDJPY',
+  'USDCHF',
+  'AUDUSD',
+  'USDCAD',
+  'NZDUSD',
+  'EURGBP',
+  'EURJPY',
+  'GBPJPY',
+  'AUDJPY',
+  'EURCHF',
+  'GBPCHF',
+  'EURAUD',
+  'EURCAD',
+  'GBPAUD',
+  'GBPCAD',
+  'AUDNZD',
+  'AUDCAD',
+  'CADJPY',
+  'CHFJPY',
+  'NZDJPY',
+  'XAUUSD',
+  'XAGUSD',
+]);
+
+/**
+ * Deterministic symbol extraction when Groq JSON extraction fails or returns null.
+ * Ensures queries like "current price of BTC" still resolve a symbol without an LLM round-trip.
+ */
+export function extractSymbolHeuristicFromMessage(message: string): string | undefined {
+  const m = message.trim();
+  if (!m) return undefined;
+
+  const cryptoRe = /\b(BTC|ETH|XRP|SOL|BNB|ADA|DOGE|DOT|MATIC|AVAX|LINK|LTC|POL|SHIB|UNI|ATOM)\b/i;
+  const cm = m.match(cryptoRe);
+  if (cm) return cm[1].toUpperCase();
+
+  const lettersOnly = m.replace(/[^A-Za-z]/g, '').toUpperCase();
+  for (let i = 0; i <= lettersOnly.length - 6; i++) {
+    const slice = lettersOnly.slice(i, i + 6);
+    if (KNOWN_FX_SIX.has(slice)) return slice;
+  }
+
+  return undefined;
+}
+
+function applySymbolHeuristicIfMissing(req: MarketContextRequest, message: string): void {
+  if (req.symbol?.trim()) return;
+  const sym = extractSymbolHeuristicFromMessage(message);
+  if (sym) {
+    req.symbol = sym;
+    req.assetClass = req.assetClass ?? inferAssetClass(sym);
+  }
+}
 
 /**
  * Extracts market context information (symbol, asset class, timeframe) from user messages.
@@ -27,37 +84,40 @@ export class MarketContextIntentExtractor {
     message: string,
     metadata?: { instrument?: string; timeframe?: string; [key: string]: unknown }
   ): Promise<MarketContextRequest> {
-    // If metadata already provides symbol/timeframe, use it
+    let result: MarketContextRequest;
+
+    // If metadata already provides symbol/timeframe, use it (still run heuristic if symbol missing)
     if (metadata?.instrument || metadata?.timeframe) {
       const symbol = metadata.instrument as string | undefined;
       const timeframeHint = metadata.timeframe as string | undefined;
-      
-      return {
+
+      result = {
         symbol,
         timeframeHint,
         rawQuery: message,
         assetClass: symbol ? inferAssetClass(symbol) : undefined,
       };
+    } else {
+      try {
+        const extracted = await this.extractWithGroq(message);
+        result = {
+          ...extracted,
+          rawQuery: message,
+        };
+      } catch (error) {
+        logger.warn('Failed to extract market context with Groq', {
+          error: (error as Error).message,
+          message: message.substring(0, 100),
+        });
+
+        result = {
+          rawQuery: message,
+        };
+      }
     }
 
-    // Otherwise, use Groq to extract from message
-    try {
-      const extracted = await this.extractWithGroq(message);
-      return {
-        ...extracted,
-        rawQuery: message,
-      };
-    } catch (error) {
-      logger.warn('Failed to extract market context with Groq', {
-        error: (error as Error).message,
-        message: message.substring(0, 100),
-      });
-
-      // Fallback: return empty request
-      return {
-        rawQuery: message,
-      };
-    }
+    applySymbolHeuristicIfMissing(result, message);
+    return result;
   }
 
   /**

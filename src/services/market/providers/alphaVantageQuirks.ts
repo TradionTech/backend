@@ -54,7 +54,7 @@ export interface AlphaVantageErrorInfo {
  * - Asset class → function selection (TIME_SERIES_INTRADAY, FX_DAILY, DIGITAL_CURRENCY_DAILY, etc.)
  * - Timeframe → interval selection (1min, 5min, 15min, 30min, 60min for intraday)
  * - FX pair symbol splitting (EURUSD → from_symbol=EUR, to_symbol=USD)
- * - FX / crypto intraday via FX_INTRADAY and DIGITAL_CURRENCY_INTRADAY (paid Alpha Vantage)
+ * - FX / crypto intraday via FX_INTRADAY and CRYPTO_INTRADAY (paid Alpha Vantage)
  */
 export function mapRequestToAlphaParams(
   request: MarketContextRequest,
@@ -177,11 +177,11 @@ function mapFxRequest(symbol: string, timeframe: Timeframe | undefined): AlphaVa
 function mapCryptoRequest(symbol: string, timeframe: Timeframe | undefined): AlphaVantageParams {
   const { cryptoSymbol, market } = parseAlphaCryptoSymbol(symbol);
 
-  // Intraday: DIGITAL_CURRENCY_INTRADAY (paid tier)
+  // Intraday: CRYPTO_INTRADAY (not DIGITAL_CURRENCY_INTRADAY — that symbol is not a valid AV function)
   if (timeframe && (timeframe.unit === 'M' || timeframe.unit === 'H')) {
     const interval = mapTimeframeToInterval(timeframe);
     return {
-      func: 'DIGITAL_CURRENCY_INTRADAY',
+      func: 'CRYPTO_INTRADAY',
       symbolParam: {
         symbol: cryptoSymbol,
         market,
@@ -371,7 +371,7 @@ export function parseTimeSeriesResponse(
     const intradaySeries =
       params.func === 'TIME_SERIES_INTRADAY' ||
       params.func === 'FX_INTRADAY' ||
-      params.func === 'DIGITAL_CURRENCY_INTRADAY';
+      params.func === 'CRYPTO_INTRADAY';
     if (intradaySeries) {
       timestamp = new Date(timestampStr.replace(' ', 'T') + 'Z').getTime();
     } else if (params.func.startsWith('FX_') || params.func.startsWith('DIGITAL_CURRENCY_')) {
@@ -442,9 +442,9 @@ function buildTimeSeriesKeyCandidates(func: string, interval?: string): string[]
   if (func === 'FX_INTRADAY' && interval) {
     keys.push(`Time Series FX (${interval})`);
   }
-  if (func === 'DIGITAL_CURRENCY_INTRADAY' && interval) {
-    keys.push(`Time Series (Digital Currency ${interval})`);
+  if (func === 'CRYPTO_INTRADAY' && interval) {
     keys.push(`Time Series Crypto (${interval})`);
+    keys.push(`Time Series (Digital Currency ${interval})`);
   }
 
   keys.push(

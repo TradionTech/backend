@@ -10,6 +10,7 @@ jest.mock('../../../config/env', () => ({
     GROQ_TIMEOUT: 30000,
     GROQ_TEMPERATURE: 0.7,
     GROQ_MAX_TOKENS: 2000,
+    GROQ_429_MAX_RETRIES: 4,
   },
 }));
 

@@ -376,7 +376,7 @@ describe('alphaVantageQuirks', () => {
       expect(params.symbolParam.market).toBe('USD');
     });
 
-    it('should map crypto intraday to DIGITAL_CURRENCY_INTRADAY', () => {
+    it('should map crypto intraday to CRYPTO_INTRADAY', () => {
       const request: MarketContextRequest = {
         symbol: 'BTC',
         assetClass: 'CRYPTO',
@@ -385,7 +385,7 @@ describe('alphaVantageQuirks', () => {
 
       const params = mapRequestToAlphaParams(request, timeframe, 'CRYPTO');
 
-      expect(params.func).toBe('DIGITAL_CURRENCY_INTRADAY');
+      expect(params.func).toBe('CRYPTO_INTRADAY');
       expect(params.interval).toBe('15min');
       expect(params.symbolParam.symbol).toBe('BTC');
       expect(params.symbolParam.market).toBe('USD');
@@ -453,6 +453,32 @@ describe('alphaVantageQuirks', () => {
       expect(result.base).toBe('EUR');
       expect(result.quote).toBe('USD');
       expect(result.issues).toBeUndefined();
+    });
+
+    it('should parse CRYPTO_INTRADAY response (Time Series Crypto)', () => {
+      const json = {
+        'Time Series Crypto (5min)': {
+          '2024-01-15 16:00:00': {
+            '1a. open (USD)': '42000.0000',
+            '2a. high (USD)': '42100.0000',
+            '3a. low (USD)': '41900.0000',
+            '4a. close (USD)': '42050.0000',
+            '5. volume': '1000',
+          },
+        },
+      };
+
+      const params = {
+        func: 'CRYPTO_INTRADAY',
+        symbolParam: { symbol: 'BTC', market: 'USD' },
+        interval: '5min',
+      };
+
+      const result = parseTimeSeriesResponse(json, params, 'BTC', 'CRYPTO');
+
+      expect(result.symbol).toBe('BTC');
+      expect(result.assetClass).toBe('CRYPTO');
+      expect(result.lastPrice).toBe(42050);
     });
   });
 

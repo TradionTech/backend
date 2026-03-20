@@ -2,6 +2,7 @@ import axios, { AxiosError } from 'axios';
 import { Readable } from 'stream';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
+import { compute429WaitMs, sleep } from './groqRateLimit';
 import type {
   ChatCompletionOptions,
   ChatCompletionResult,
@@ -100,8 +101,35 @@ export class GroqCompoundClient implements IChatLLMClient {
   /**
    * Stream a chat completion from Groq (OpenAI-compatible SSE).
    * Calls onChunk with each content delta; aggregates and returns full content and metadata.
+   * Retries on HTTP 429 after waiting per API hint (or backoff).
    */
   async completeChatStream(
+    options: ChatCompletionOptions,
+    callbacks: ChatStreamCallbacks
+  ): Promise<ChatCompletionResult> {
+    const maxAttempts = env.GROQ_429_MAX_RETRIES ?? 4;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await this.completeChatStreamSingleAttempt(options, callbacks);
+      } catch (error) {
+        lastError = error;
+        const err = error as Error & { statusCode?: number };
+        if (err.statusCode !== 429 || attempt >= maxAttempts) throw error;
+        const waitMs = compute429WaitMs(err.message, attempt - 1);
+        options.onRateLimitRetry?.({ waitMs, attempt, maxAttempts });
+        logger.warn('Groq streaming 429 — waiting before retry', {
+          attempt,
+          maxAttempts,
+          waitMs,
+        });
+        await sleep(waitMs);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('Groq completeChatStream failed after retries');
+  }
+
+  private async completeChatStreamSingleAttempt(
     options: ChatCompletionOptions,
     callbacks: ChatStreamCallbacks
   ): Promise<ChatCompletionResult> {
@@ -221,8 +249,28 @@ export class GroqCompoundClient implements IChatLLMClient {
    * Complete a chat conversation using Groq.
    * Supports built-in tool selection for web_search, code_interpreter, browser_automation, wolfram_alpha.
    * Uses compound_custom.tools.enabled_tools for built-in Compound tools (not OpenAI-style function tools).
+   * Retries on HTTP 429 after waiting per API hint (or backoff).
    */
   async completeChat(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
+    const maxAttempts = env.GROQ_429_MAX_RETRIES ?? 4;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await this.completeChatSingleAttempt(options);
+      } catch (error) {
+        lastError = error;
+        const err = error as Error & { statusCode?: number };
+        if (err.statusCode !== 429 || attempt >= maxAttempts) throw error;
+        const waitMs = compute429WaitMs(err.message, attempt - 1);
+        options.onRateLimitRetry?.({ waitMs, attempt, maxAttempts });
+        logger.warn('Groq 429 — waiting before retry', { attempt, maxAttempts, waitMs });
+        await sleep(waitMs);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('Groq completeChat failed after retries');
+  }
+
+  private async completeChatSingleAttempt(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
     const {
       messages,
       allowedTools = [],

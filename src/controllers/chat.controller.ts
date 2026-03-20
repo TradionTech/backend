@@ -193,7 +193,17 @@ export const chatController = {
             modelId,
           },
           {
-            onProgress: (stage) => sendSSE(res, { type: 'progress', stage }),
+            onProgress: (stage, detail) =>
+              sendSSE(
+                res,
+                detail?.waitMs != null
+                  ? {
+                      type: 'progress',
+                      stage,
+                      wait_ms: Math.round(detail.waitMs),
+                    }
+                  : { type: 'progress', stage }
+              ),
             onChunk: (text) => sendSSE(res, { type: 'content', content: text }),
           }
         ),

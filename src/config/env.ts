@@ -91,6 +91,12 @@ export const env = {
   GROQ_TIMEOUT: parseInt(process.env.GROQ_TIMEOUT ?? '30000', 10),
   GROQ_TEMPERATURE: parseFloat(process.env.GROQ_TEMPERATURE ?? '0.7'),
   GROQ_MAX_TOKENS: parseInt(process.env.GROQ_MAX_TOKENS ?? '2000', 10),
+  /** Max retries when Groq returns 429 (rate limit); waits per API hint or backoff. */
+  GROQ_429_MAX_RETRIES: (() => {
+    const n = parseInt(process.env.GROQ_429_MAX_RETRIES || '4', 10);
+    if (!Number.isFinite(n)) return 4;
+    return Math.min(10, Math.max(1, n));
+  })(),
 
   // Conversation context (history + summarization)
   CONVERSATION_HISTORY_MAX_MESSAGES: parseInt(

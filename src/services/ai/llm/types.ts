@@ -8,6 +8,12 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface RateLimitRetryInfo {
+  waitMs: number;
+  attempt: number;
+  maxAttempts: number;
+}
+
 export interface ChatCompletionOptions {
   messages: ChatMessage[];
   modelId?: string;
@@ -18,6 +24,8 @@ export interface ChatCompletionOptions {
     type: 'json_object' | 'json_schema';
     json_schema?: unknown;
   };
+  /** Groq: invoked before sleeping on HTTP 429 so the UI can show a progress state. */
+  onRateLimitRetry?: (info: RateLimitRetryInfo) => void;
 }
 
 export interface ChatCompletionResult {

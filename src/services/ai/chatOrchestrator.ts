@@ -21,6 +21,13 @@ import { marketContextIntentExtractor } from '../market/marketContextIntentExtra
 import { logger } from '../../config/logger';
 import { contextCache, ContextCache } from '../cache/contextCache';
 import { economicCalendarService } from '../economicCalendar/economicCalendarService';
+import type { ChatCompletionOptions } from './llm/types';
+
+export type ChatProgressStage =
+  | 'context'
+  | 'generating'
+  | 'safety_check'
+  | 'waiting_rate_limit';
 
 export interface ChatRequest {
   userId: string;
@@ -37,7 +44,8 @@ export interface ChatRequest {
 }
 
 export interface ChatStreamCallbacks {
-  onProgress?: (stage: 'context' | 'generating' | 'safety_check') => void;
+  /** `waiting_rate_limit` includes `detail.waitMs` when Groq returns 429 and we back off. */
+  onProgress?: (stage: ChatProgressStage, detail?: { waitMs?: number }) => void;
   onChunk?: (text: string) => void;
 }
 
@@ -82,6 +90,16 @@ export class ChatOrchestrator {
     }
 
     return true;
+  }
+
+  private rateLimitChatOptions(
+    streamCallbacks?: ChatStreamCallbacks
+  ): Pick<ChatCompletionOptions, 'onRateLimitRetry'> {
+    return {
+      onRateLimitRetry: (info) => {
+        streamCallbacks?.onProgress?.('waiting_rate_limit', { waitMs: info.waitMs });
+      },
+    };
   }
 
   private shouldIncludeEconomicCalendar(
@@ -184,6 +202,7 @@ export class ChatOrchestrator {
           maxTokens: 400,
           temperature: 0.7,
           responseFormat: undefined,
+          ...this.rateLimitChatOptions(streamCallbacks),
         });
 
         const responseContent = llmResponse.content?.trim() || 'Hi! How can I help?';
@@ -481,9 +500,24 @@ export class ChatOrchestrator {
             maxTokens: 2000,
             temperature: 0.7,
             responseFormat: useJsonOutput ? { type: 'json_object' } : undefined,
+            ...this.rateLimitChatOptions(streamCallbacks),
           },
           { onChunk: () => {} }
         );
+        if (!llmResponse.content?.trim()) {
+          logger.warn('Streaming chat returned empty content; retrying non-stream once', {
+            conversationId: session.id,
+          });
+          llmResponse = await this.completeChatWithEmptyRetry(chatClient, {
+            messages,
+            modelId,
+            allowedTools: ['web_search', 'code_interpreter'],
+            maxTokens: 2000,
+            temperature: 0.7,
+            responseFormat: useJsonOutput ? { type: 'json_object' } : undefined,
+            ...this.rateLimitChatOptions(streamCallbacks),
+          });
+        }
       } else {
         try {
           llmResponse = await this.completeChatWithEmptyRetry(chatClient, {
@@ -493,6 +527,7 @@ export class ChatOrchestrator {
             maxTokens: 2000,
             temperature: 0.7,
             responseFormat: useJsonOutput ? { type: 'json_object' } : undefined,
+            ...this.rateLimitChatOptions(streamCallbacks),
           });
         } catch (chatErr) {
           const err = chatErr as Error & { statusCode?: number };
@@ -508,7 +543,8 @@ export class ChatOrchestrator {
               systemPrompt,
               conversationHistory,
               message,
-              modelId
+              modelId,
+              streamCallbacks
             );
             llmResponse = {
               id: retryResult.id,
@@ -697,7 +733,8 @@ export class ChatOrchestrator {
     systemPrompt: string,
     conversationHistory: GroqMessage[],
     userMessage: string,
-    modelId?: string
+    modelId?: string,
+    streamCallbacks?: ChatStreamCallbacks
   ): Promise<{ id: string; content: string; usage?: GroqChatResponse['usage'] }> {
     const MAX_CONTEXT_FOR_SUMMARY = 28000;
 
@@ -722,6 +759,7 @@ export class ChatOrchestrator {
         modelId,
         maxTokens: 600,
         temperature: 0.3,
+        ...this.rateLimitChatOptions(streamCallbacks),
       });
       summary = summarizeResponse.content.trim();
     } catch (err) {
@@ -755,6 +793,7 @@ Respond to the user's message using the condensed context above. If the context 
       modelId,
       maxTokens: 2000,
       temperature: 0.7,
+      ...this.rateLimitChatOptions(streamCallbacks),
     });
 
     return {

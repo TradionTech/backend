@@ -121,7 +121,17 @@ const swaggerDefinition = {
           'Server-Sent Events payload for POST /chat. For type=content, chunks are replayed plain text (aligned with the final message), not raw JSON deltas from the model.',
         properties: {
           type: { type: 'string', enum: ['progress', 'content', 'done'] },
-          stage: { type: 'string', enum: ['context', 'generating', 'safety_check'] },
+          stage: {
+            type: 'string',
+            enum: ['context', 'generating', 'safety_check', 'waiting_rate_limit'],
+            description:
+              'Pipeline stage. `waiting_rate_limit` is emitted when Groq returns 429 and the server is backing off; see `wait_ms`.',
+          },
+          wait_ms: {
+            type: 'integer',
+            description:
+              'Present with `stage: waiting_rate_limit`: approximate milliseconds before the next attempt.',
+          },
           content: {
             type: 'string',
             description:
@@ -148,6 +158,13 @@ const swaggerDefinition = {
             value: {
               type: 'progress',
               stage: 'generating',
+            },
+          },
+          rateLimit: {
+            value: {
+              type: 'progress',
+              stage: 'waiting_rate_limit',
+              wait_ms: 2300,
             },
           },
           content: {

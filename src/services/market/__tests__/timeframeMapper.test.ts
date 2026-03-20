@@ -32,6 +32,8 @@ describe('timeframeMapper', () => {
       expect(mapTimeframeHint('D1')).toEqual({ unit: 'D', size: 1, label: 'Daily' });
       expect(mapTimeframeHint('M15')).toEqual({ unit: 'M', size: 15, label: '15 Minutes' });
       expect(mapTimeframeHint('W1')).toEqual({ unit: 'W', size: 1, label: 'Weekly' });
+      expect(mapTimeframeHint('5min')).toEqual({ unit: 'M', size: 5, label: '5 Minutes' });
+      expect(mapTimeframeHint('30 minutes')).toEqual({ unit: 'M', size: 30, label: '30 Minutes' });
     });
 
     it('should map daily/weekly words used by price action ladder', () => {
@@ -70,9 +72,9 @@ describe('timeframeMapper', () => {
       expect(tf).toEqual({ unit: 'H', size: 4, label: '4 Hours' });
     });
 
-    it('should return D1 for EQUITY by default', () => {
+    it('should return H1 for EQUITY by default', () => {
       const tf = getDefaultTimeframe('EQUITY');
-      expect(tf).toEqual({ unit: 'D', size: 1, label: 'Daily' });
+      expect(tf).toEqual({ unit: 'H', size: 1, label: '1 Hour' });
     });
 
     it('should return H1 as fallback', () => {

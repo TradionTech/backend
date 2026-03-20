@@ -14,6 +14,16 @@ import { env } from '../../../config/env';
 import { logger } from '../../../config/logger';
 import { withAlphaVantageThrottle } from '../../alphaVantageThrottle';
 
+/** Alpha Vantage NEWS_SENTIMENT `time_from` / `time_to` format (UTC). */
+function formatAlphaNewsTimeUtc(d: Date): string {
+  const y = d.getUTCFullYear();
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const da = String(d.getUTCDate()).padStart(2, '0');
+  const h = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${y}${mo}${da}T${h}${mi}`;
+}
+
 /**
  * Alpha Vantage news sentiment provider.
  *
@@ -138,18 +148,26 @@ export class AlphaVantageNewsSentimentProvider implements SentimentProvider {
         assetClass
       );
 
+      const limit = String(env.ALPHAVANTAGE_NEWS_LIMIT ?? 100);
       const queryParams: Record<string, string> = {
         function: 'NEWS_SENTIMENT',
         tickers: tickersParam,
         apikey: this.apiKey,
-        limit: '50',
+        limit,
+        sort: 'LATEST',
       };
+
+      const windowMin = windowMinutes ?? 7 * 24 * 60;
+      const windowStartForApi =
+        args.newsFromDate ?? new Date(Date.now() - windowMin * 60 * 1000);
+      queryParams.time_from = formatAlphaNewsTimeUtc(windowStartForApi);
 
       logger.info('Alpha Vantage news API request', {
         symbol,
         tickers: tickersParam,
         assetClass,
         windowMinutes,
+        limit,
       });
 
       // Make API request with timeout (throttled for free-tier rate limit)
@@ -219,11 +237,8 @@ export class AlphaVantageNewsSentimentProvider implements SentimentProvider {
         return [];
       }
 
-      // Filter articles by time: use newsFromDate when provided (dynamic by window), else start of current day (UTC)
-      const now = new Date();
       const windowStart =
-        args.newsFromDate ??
-        new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+        args.newsFromDate ?? new Date(Date.now() - windowMin * 60 * 1000);
       const signals: RawSentimentSignal[] = [];
 
       for (const article of feed) {

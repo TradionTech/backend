@@ -49,6 +49,16 @@ export const env = {
   ALPHAVANTAGE_BASE_URL: process.env.ALPHAVANTAGE_BASE_URL ?? 'https://www.alphavantage.co/query',
   /** Min ms between requests (free tier: 1 req/s = 1000). Set to 0 to disable when using premium. */
   ALPHAVANTAGE_MIN_INTERVAL_MS: parseInt(process.env.ALPHAVANTAGE_MIN_INTERVAL_MS ?? '1000', 10),
+  /**
+   * Second Alpha Vantage request per snapshot: GLOBAL_QUOTE (equities) or CURRENCY_EXCHANGE_RATE (FX/crypto)
+   * to align last price and timestamp with spot/global quote. Set ALPHAVANTAGE_ENRICH_QUOTES=false to save quota.
+   */
+  ALPHAVANTAGE_ENRICH_QUOTES: (process.env.ALPHAVANTAGE_ENRICH_QUOTES ?? 'true').toLowerCase() !== 'false',
+  /** NEWS_SENTIMENT article limit (Alpha Vantage allows up to 1000). */
+  ALPHAVANTAGE_NEWS_LIMIT: Math.min(
+    1000,
+    Math.max(1, parseInt(process.env.ALPHAVANTAGE_NEWS_LIMIT ?? '100', 10))
+  ),
 
   // Crypto Fear & Greed Index API
   CRYPTO_FG_API_BASE_URL: process.env.CRYPTO_FG_API_BASE_URL ?? 'https://api.alternative.me/fng/',

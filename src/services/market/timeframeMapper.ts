@@ -71,6 +71,18 @@ function parseExplicitTimeframe(hint: string): Timeframe | null {
     return { unit: 'W', size: 1, label: 'Weekly' };
   }
 
+  // Spelled-out minute/hour hints: "5min", "15 minutes", "1h", "4 hours"
+  const minWordMatch = hint.match(/^(\d+)\s*min(ute)?s?$/i);
+  if (minWordMatch) {
+    const size = parseInt(minWordMatch[1], 10);
+    return { unit: 'M', size, label: size === 1 ? '1 Minute' : `${size} Minutes` };
+  }
+  const hourWordMatch = hint.match(/^(\d+)\s*h(our)?s?$/i);
+  if (hourWordMatch) {
+    const size = parseInt(hourWordMatch[1], 10);
+    return { unit: 'H', size, label: size === 1 ? '1 Hour' : `${size} Hours` };
+  }
+
   // Optional number + unit: "1h", "4h", "1d", "15m", "1w"
   const match = hint.match(/^(\d+)?([mhdw])$/i);
   // Unit + optional number: "D1", "H4", "M15", "W1"
@@ -193,8 +205,8 @@ export function getDefaultTimeframe(
       // Crypto often uses H1-D1
       return { unit: 'H', size: 4, label: '4 Hours' };
     case 'EQUITY':
-      // Equities often use D1
-      return { unit: 'D', size: 1, label: 'Daily' };
+      // Default intraday for fresher snapshots with paid Alpha Vantage; hint "daily" for EOD series
+      return { unit: 'H', size: 1, label: '1 Hour' };
     default:
       // Default to H1
       return { unit: 'H', size: 1, label: '1 Hour' };

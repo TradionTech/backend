@@ -54,7 +54,7 @@ export interface AlphaVantageErrorInfo {
  * - Asset class → function selection (TIME_SERIES_INTRADAY, FX_DAILY, DIGITAL_CURRENCY_DAILY, etc.)
  * - Timeframe → interval selection (1min, 5min, 15min, 30min, 60min for intraday)
  * - FX pair symbol splitting (EURUSD → from_symbol=EUR, to_symbol=USD)
- * - Degradation handling (intraday → daily when not available on free tier)
+ * - FX / crypto intraday via FX_INTRADAY and DIGITAL_CURRENCY_INTRADAY (paid Alpha Vantage)
  */
 export function mapRequestToAlphaParams(
   request: MarketContextRequest,
@@ -81,6 +81,27 @@ export function mapRequestToAlphaParams(
 }
 
 /**
+ * Parse crypto symbol and fiat market for Alpha Vantage (DIGITAL_CURRENCY_* and CURRENCY_EXCHANGE_RATE).
+ */
+export function parseAlphaCryptoSymbol(symbol: string): { cryptoSymbol: string; market: string } {
+  const cryptoMatch = symbol.match(/^([A-Z]+)[\/\-_]([A-Z]+)$/i);
+  if (cryptoMatch) {
+    return {
+      cryptoSymbol: cryptoMatch[1].toUpperCase(),
+      market: cryptoMatch[2].toUpperCase(),
+    };
+  }
+  const u = symbol.toUpperCase();
+  const commonMarkets = ['USD', 'EUR', 'GBP', 'JPY', 'CNY'];
+  for (const mkt of commonMarkets) {
+    if (u.endsWith(mkt) && u.length > mkt.length) {
+      return { cryptoSymbol: u.slice(0, -mkt.length), market: mkt };
+    }
+  }
+  return { cryptoSymbol: u, market: 'USD' };
+}
+
+/**
  * Map FX request to Alpha Vantage FX function
  */
 function mapFxRequest(symbol: string, timeframe: Timeframe | undefined): AlphaVantageParams {
@@ -93,19 +114,16 @@ function mapFxRequest(symbol: string, timeframe: Timeframe | undefined): AlphaVa
   const fromSymbol = fxMatch[1];
   const toSymbol = fxMatch[2];
 
-  // Alpha Vantage FX functions: FX_DAILY, FX_WEEKLY, FX_MONTHLY
-  // Note: Alpha Vantage free tier doesn't support intraday FX
-  // We degrade to daily if intraday is requested
+  // Intraday: FX_INTRADAY (premium / paid plans)
   if (timeframe && (timeframe.unit === 'M' || timeframe.unit === 'H')) {
-    // Intraday requested but not available - degrade to daily
+    const interval = mapTimeframeToInterval(timeframe);
     return {
-      func: 'FX_DAILY',
+      func: 'FX_INTRADAY',
       symbolParam: {
         from_symbol: fromSymbol,
         to_symbol: toSymbol,
       },
-      degraded: true,
-      degradationReason: 'intraday_unavailable_for_free_tier',
+      interval,
     };
   }
 
@@ -157,43 +175,18 @@ function mapFxRequest(symbol: string, timeframe: Timeframe | undefined): AlphaVa
  * Symbols can be in format "BTC" or "BTC/USD" - we need to parse and extract crypto symbol and market
  */
 function mapCryptoRequest(symbol: string, timeframe: Timeframe | undefined): AlphaVantageParams {
-  // Parse crypto symbol - handle formats like "BTC", "BTC/USD", "BTC-USD", "BTCUSD"
-  let cryptoSymbol = symbol;
-  let market = 'USD'; // Default market
+  const { cryptoSymbol, market } = parseAlphaCryptoSymbol(symbol);
 
-  // Try to parse symbol/market pairs (e.g., "BTC/USD", "BTC-USD", "BTC_USD")
-  const cryptoMatch = symbol.match(/^([A-Z]+)[\/\-_]([A-Z]+)$/i);
-  if (cryptoMatch) {
-    cryptoSymbol = cryptoMatch[1].toUpperCase();
-    market = cryptoMatch[2].toUpperCase();
-  } else {
-    // Try to parse concatenated format (e.g., "BTCUSD" where last 3 chars are market)
-    // This is less reliable, so we'll default to USD if we can't parse
-    const commonMarkets = ['USD', 'EUR', 'GBP', 'JPY', 'CNY'];
-    for (const mkt of commonMarkets) {
-      if (symbol.toUpperCase().endsWith(mkt) && symbol.length > mkt.length) {
-        cryptoSymbol = symbol.slice(0, -mkt.length).toUpperCase();
-        market = mkt;
-        break;
-      }
-    }
-    // If no market found, use symbol as-is and default to USD
-    cryptoSymbol = symbol.toUpperCase();
-  }
-
-  // Alpha Vantage Crypto functions: DIGITAL_CURRENCY_DAILY, DIGITAL_CURRENCY_WEEKLY, DIGITAL_CURRENCY_MONTHLY
-  // Note: Alpha Vantage free tier doesn't support intraday crypto
-  // We degrade to daily if intraday is requested
+  // Intraday: DIGITAL_CURRENCY_INTRADAY (paid tier)
   if (timeframe && (timeframe.unit === 'M' || timeframe.unit === 'H')) {
-    // Intraday requested but not available - degrade to daily
+    const interval = mapTimeframeToInterval(timeframe);
     return {
-      func: 'DIGITAL_CURRENCY_DAILY',
+      func: 'DIGITAL_CURRENCY_INTRADAY',
       symbolParam: {
         symbol: cryptoSymbol,
-        market: market,
+        market,
       },
-      degraded: true,
-      degradationReason: 'intraday_unavailable_for_free_tier',
+      interval,
     };
   }
 
@@ -375,14 +368,15 @@ export function parseTimeSeriesResponse(
 
     // Parse timestamp - Alpha Vantage uses different formats
     let timestamp: number;
-    if (params.func.startsWith('FX_') || params.func.startsWith('DIGITAL_CURRENCY_')) {
-      // FX and Crypto use date-only strings like "2024-01-15"
-      timestamp = new Date(timestampStr + 'T00:00:00Z').getTime();
-    } else if (params.func === 'TIME_SERIES_INTRADAY') {
-      // Equity intraday uses "2024-01-15 10:30:00" format
+    const intradaySeries =
+      params.func === 'TIME_SERIES_INTRADAY' ||
+      params.func === 'FX_INTRADAY' ||
+      params.func === 'DIGITAL_CURRENCY_INTRADAY';
+    if (intradaySeries) {
       timestamp = new Date(timestampStr.replace(' ', 'T') + 'Z').getTime();
+    } else if (params.func.startsWith('FX_') || params.func.startsWith('DIGITAL_CURRENCY_')) {
+      timestamp = new Date(timestampStr + 'T00:00:00Z').getTime();
     } else {
-      // Equity daily/weekly/monthly uses "2024-01-15" format
       timestamp = new Date(timestampStr + 'T00:00:00Z').getTime();
     }
 
@@ -437,47 +431,64 @@ export function parseTimeSeriesResponse(
 }
 
 /**
- * Find the time series key in Alpha Vantage response.
- * Different functions use different key names.
+ * Candidate JSON keys for OHLCV time series, ordered by specificity for the requested function.
  */
-function findTimeSeriesKey(json: any, func: string, interval?: string): string | null {
-  // Try common patterns
-  const possibleKeys = [
-    // Intraday equity
-    interval ? `Time Series (${interval})` : null,
-    // Daily equity
+function buildTimeSeriesKeyCandidates(func: string, interval?: string): string[] {
+  const keys: string[] = [];
+
+  if (func === 'TIME_SERIES_INTRADAY' && interval) {
+    keys.push(`Time Series (${interval})`);
+  }
+  if (func === 'FX_INTRADAY' && interval) {
+    keys.push(`Time Series FX (${interval})`);
+  }
+  if (func === 'DIGITAL_CURRENCY_INTRADAY' && interval) {
+    keys.push(`Time Series (Digital Currency ${interval})`);
+    keys.push(`Time Series Crypto (${interval})`);
+  }
+
+  keys.push(
     'Time Series (Daily)',
-    // Weekly equity
     'Weekly Time Series',
-    // Monthly equity
     'Monthly Time Series',
-    // FX
     'Time Series FX (Daily)',
     'Time Series FX (Weekly)',
     'Time Series FX (Monthly)',
     'FX Daily Time Series',
-    'Weekly Time Series',
-    'Monthly Time Series',
-    // Crypto (Digital Currency)
     'Time Series (Digital Currency Daily)',
     'Time Series (Digital Currency Weekly)',
-    'Time Series (Digital Currency Monthly)',
-    // Also check for metadata keys that might indicate the structure
-  ].filter(Boolean) as string[];
+    'Time Series (Digital Currency Monthly)'
+  );
 
-  for (const key of possibleKeys) {
-    if (json[key]) {
+  if (interval && !keys.includes(`Time Series (${interval})`)) {
+    keys.push(`Time Series (${interval})`);
+  }
+
+  return keys;
+}
+
+/**
+ * Find the time series key in Alpha Vantage response.
+ * Different functions use different key names; paid intraday variants vary slightly.
+ */
+function findTimeSeriesKey(json: any, func: string, interval?: string): string | null {
+  for (const key of buildTimeSeriesKeyCandidates(func, interval)) {
+    if (json[key] && typeof json[key] === 'object') {
       return key;
     }
   }
 
-  // If no time series key found, check if there's an error or informational message
-  // Alpha Vantage sometimes returns "Information" key with error messages
+  for (const key of Object.keys(json)) {
+    if (key.startsWith('Time Series') && json[key] && typeof json[key] === 'object') {
+      return key;
+    }
+  }
+
   if (json['Information']) {
     logger.error(
       `No time series key found in Alpha Vantage response. Information: ${json['Information']}`
     );
-    return null; // This will trigger the error handling
+    return null;
   }
 
   return null;
@@ -557,4 +568,59 @@ export function detectAlphaVantageError(json: any): AlphaVantageErrorInfo {
   return {
     isError: false,
   };
+}
+
+/** Parsed realtime / global quote for merging onto time-series snapshots */
+export interface AlphaQuoteEnrichment {
+  lastPrice: number;
+  timestamp: number;
+}
+
+/**
+ * CURRENCY_EXCHANGE_RATE — forex and crypto-fiat spot (uses Last Refreshed when present).
+ */
+export function parseCurrencyExchangeRateResponse(json: any): AlphaQuoteEnrichment | null {
+  const rate = json?.['Realtime Currency Exchange Rate'];
+  if (!rate || typeof rate !== 'object') {
+    return null;
+  }
+  const rawPrice =
+    rate['5. Exchange Rate'] ?? rate['5. exchange rate'] ?? rate['5. Exchange rate'];
+  const price = parseFloat(String(rawPrice ?? ''));
+  if (Number.isNaN(price)) {
+    return null;
+  }
+  const refreshed = rate['6. Last Refreshed'] ?? rate['6. last refreshed'] ?? '';
+  let ts = Date.now();
+  if (refreshed) {
+    const parsed = new Date(String(refreshed).replace(' ', 'T') + 'Z').getTime();
+    if (!Number.isNaN(parsed)) {
+      ts = parsed;
+    }
+  }
+  return { lastPrice: price, timestamp: ts };
+}
+
+/**
+ * GLOBAL_QUOTE — equity last price (uses latest trading day as coarse timestamp).
+ */
+export function parseGlobalQuoteResponse(json: any): AlphaQuoteEnrichment | null {
+  const q = json?.['Global Quote'];
+  if (!q || typeof q !== 'object') {
+    return null;
+  }
+  const rawPrice = q['05. price'] ?? q['5. price'] ?? q['05. Price'];
+  const price = parseFloat(String(rawPrice ?? ''));
+  if (Number.isNaN(price)) {
+    return null;
+  }
+  const day = q['07. latest trading day'] ?? q['7. latest trading day'] ?? '';
+  let ts = Date.now();
+  if (day && /^\d{4}-\d{2}-\d{2}$/.test(String(day))) {
+    const parsed = new Date(`${day}T20:00:00.000Z`).getTime();
+    if (!Number.isNaN(parsed)) {
+      ts = parsed;
+    }
+  }
+  return { lastPrice: price, timestamp: ts };
 }

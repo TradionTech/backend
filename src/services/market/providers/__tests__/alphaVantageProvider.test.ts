@@ -6,6 +6,7 @@ import {
 } from '../alphaVantageQuirks';
 import type { MarketContextRequest, Timeframe } from '../../../../types/market';
 import axios, { type AxiosInstance } from 'axios';
+import { env } from '../../../../config/env';
 
 // Mock axios
 jest.mock('axios');
@@ -14,8 +15,12 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 describe('AlphaVantageProvider', () => {
   let provider: AlphaVantageProvider;
   let mockAxiosInstance: jest.Mocked<AxiosInstance>;
+  let prevEnrichQuotes: boolean;
 
   beforeEach(() => {
+    prevEnrichQuotes = env.ALPHAVANTAGE_ENRICH_QUOTES;
+    env.ALPHAVANTAGE_ENRICH_QUOTES = false;
+
     // Create mock axios instance
     mockAxiosInstance = {
       get: jest.fn(),
@@ -28,6 +33,7 @@ describe('AlphaVantageProvider', () => {
   });
 
   afterEach(() => {
+    env.ALPHAVANTAGE_ENRICH_QUOTES = prevEnrichQuotes;
     jest.clearAllMocks();
   });
 
@@ -157,20 +163,27 @@ describe('AlphaVantageProvider', () => {
       });
     });
 
-    it('should degrade FX intraday to daily with issue flag', async () => {
+    it('should fetch FX intraday for H1 using FX_INTRADAY', async () => {
       const mockResponse = {
         data: {
           'Meta Data': {
-            '1. Information': 'Forex Daily Prices',
+            '1. Information': 'Forex Intraday (60min)',
             '2. From Symbol': 'EUR',
             '3. To Symbol': 'USD',
-            '4. Last Refreshed': '2024-01-15',
+            '4. Last Refreshed': '2024-01-15 16:00:00',
+            '5. Interval': '60min',
           },
-          'Time Series FX (Daily)': {
-            '2024-01-15': {
+          'Time Series FX (60min)': {
+            '2024-01-15 15:00:00': {
               '1. open': '1.1000',
               '2. high': '1.1050',
               '3. low': '1.0950',
+              '4. close': '1.1010',
+            },
+            '2024-01-15 16:00:00': {
+              '1. open': '1.1010',
+              '2. high': '1.1060',
+              '3. low': '1.0960',
               '4. close': '1.1020',
             },
           },
@@ -182,13 +195,22 @@ describe('AlphaVantageProvider', () => {
       const request: MarketContextRequest = {
         symbol: 'EURUSD',
         assetClass: 'FX',
-        timeframeHint: '1H', // Intraday requested
+        timeframeHint: '1H',
       };
 
       const result = await provider.getSnapshot(request);
 
-      expect(result.issues).toContain('intraday_unavailable_for_free_tier');
-      expect(result.candles).toBeDefined();
+      expect(result.issues).toBeUndefined();
+      expect(result.candles?.length).toBe(2);
+      expect(result.lastPrice).toBe(1.102);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('', {
+        params: expect.objectContaining({
+          function: 'FX_INTRADAY',
+          from_symbol: 'EUR',
+          to_symbol: 'USD',
+          interval: '60min',
+        }),
+      });
     });
 
     it('should handle error response with Error Message', async () => {
@@ -311,7 +333,7 @@ describe('alphaVantageQuirks', () => {
       expect(params.symbolParam.to_symbol).toBe('USD');
     });
 
-    it('should degrade FX intraday to daily', () => {
+    it('should map FX intraday to FX_INTRADAY', () => {
       const request: MarketContextRequest = {
         symbol: 'EURUSD',
         assetClass: 'FX',
@@ -320,9 +342,10 @@ describe('alphaVantageQuirks', () => {
 
       const params = mapRequestToAlphaParams(request, timeframe, 'FX');
 
-      expect(params.func).toBe('FX_DAILY');
-      expect(params.degraded).toBe(true);
-      expect(params.degradationReason).toBe('intraday_unavailable_for_free_tier');
+      expect(params.func).toBe('FX_INTRADAY');
+      expect(params.interval).toBe('60min');
+      expect(params.symbolParam.from_symbol).toBe('EUR');
+      expect(params.symbolParam.to_symbol).toBe('USD');
     });
 
     it('should map crypto daily request correctly', () => {
@@ -353,7 +376,7 @@ describe('alphaVantageQuirks', () => {
       expect(params.symbolParam.market).toBe('USD');
     });
 
-    it('should degrade crypto intraday to daily', () => {
+    it('should map crypto intraday to DIGITAL_CURRENCY_INTRADAY', () => {
       const request: MarketContextRequest = {
         symbol: 'BTC',
         assetClass: 'CRYPTO',
@@ -362,9 +385,10 @@ describe('alphaVantageQuirks', () => {
 
       const params = mapRequestToAlphaParams(request, timeframe, 'CRYPTO');
 
-      expect(params.func).toBe('DIGITAL_CURRENCY_DAILY');
-      expect(params.degraded).toBe(true);
-      expect(params.degradationReason).toBe('intraday_unavailable_for_free_tier');
+      expect(params.func).toBe('DIGITAL_CURRENCY_INTRADAY');
+      expect(params.interval).toBe('15min');
+      expect(params.symbolParam.symbol).toBe('BTC');
+      expect(params.symbolParam.market).toBe('USD');
     });
   });
 
@@ -400,7 +424,8 @@ describe('alphaVantageQuirks', () => {
       expect(result.symbol).toBe('IBM');
       expect(result.assetClass).toBe('EQUITY');
       expect(result.candles?.length).toBe(2);
-      expect(result.candles?.[0].timestamp).toBeLessThan(result.candles?.[1].timestamp); // Sorted ascending
+      const c = result.candles!;
+      expect(c[0].timestamp).toBeLessThan(c[1].timestamp);
       expect(result.lastPrice).toBe(150.5);
     });
 
@@ -419,8 +444,6 @@ describe('alphaVantageQuirks', () => {
       const params = {
         func: 'FX_DAILY',
         symbolParam: { from_symbol: 'EUR', to_symbol: 'USD' },
-        degraded: true,
-        degradationReason: 'intraday_unavailable_for_free_tier',
       };
 
       const result = parseTimeSeriesResponse(json, params, 'EURUSD', 'FX');
@@ -429,7 +452,7 @@ describe('alphaVantageQuirks', () => {
       expect(result.assetClass).toBe('FX');
       expect(result.base).toBe('EUR');
       expect(result.quote).toBe('USD');
-      expect(result.issues).toContain('intraday_unavailable_for_free_tier');
+      expect(result.issues).toBeUndefined();
     });
   });
 

@@ -25,27 +25,11 @@ describe('MarketContextService', () => {
         symbol: 'EURUSD',
         assetClass: 'FX',
         candles: [
-          {
-            timestamp: Date.now() - 3600000,
-            open: 1.1000,
-            high: 1.1050,
-            low: 1.0950,
-            close: 1.1020,
-          },
-          {
-            timestamp: Date.now() - 1800000,
-            open: 1.1020,
-            high: 1.1070,
-            low: 1.1010,
-            close: 1.1040,
-          },
-          {
-            timestamp: Date.now(),
-            open: 1.1040,
-            high: 1.1080,
-            low: 1.1030,
-            close: 1.1060,
-          },
+          { timestamp: Date.now() - 5000000, open: 1.096, high: 1.101, low: 1.094, close: 1.099 },
+          { timestamp: Date.now() - 4000000, open: 1.099, high: 1.104, low: 1.098, close: 1.101 },
+          { timestamp: Date.now() - 3600000, open: 1.1000, high: 1.1050, low: 1.0950, close: 1.1020 },
+          { timestamp: Date.now() - 1800000, open: 1.1020, high: 1.1070, low: 1.1010, close: 1.1040 },
+          { timestamp: Date.now(), open: 1.1040, high: 1.1080, low: 1.1030, close: 1.1060 },
         ],
         lastPrice: 1.1060,
         timestamp: Date.now(),
@@ -131,6 +115,8 @@ describe('MarketContextService', () => {
         symbol: 'EURUSD',
         assetClass: 'FX',
         candles: [
+          { timestamp: Date.now() - 5000000, open: 1.095, high: 1.1, low: 1.094, close: 1.098 },
+          { timestamp: Date.now() - 4000000, open: 1.098, high: 1.103, low: 1.097, close: 1.1 },
           { timestamp: Date.now() - 3600000, open: 1.1000, high: 1.1050, low: 1.0950, close: 1.1010 },
           { timestamp: Date.now() - 2400000, open: 1.1010, high: 1.1060, low: 1.1000, close: 1.1020 },
           { timestamp: Date.now() - 1200000, open: 1.1020, high: 1.1070, low: 1.1010, close: 1.1030 },
@@ -168,6 +154,7 @@ describe('MarketContextService', () => {
       const request: MarketContextRequest = {
         symbol: 'EURUSD',
         assetClass: 'FX',
+        timeframeHint: '5m',
       };
 
       const context = service.buildContext(rawData, request);

@@ -1,5 +1,5 @@
-import axios, { type AxiosInstance } from 'axios';
-import type { MarketContextRequest, RawMarketData } from '../../../types/market';
+import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
+import type { AssetClass, MarketContextRequest, RawMarketData } from '../../../types/market';
 import { MarketDataProvider } from '../marketDataProvider';
 import { inferAssetClass } from '../assetClassInferrer';
 import { mapTimeframeHint, getDefaultTimeframe } from '../timeframeMapper';
@@ -7,9 +7,13 @@ import {
   mapRequestToAlphaParams,
   parseTimeSeriesResponse,
   detectAlphaVantageError,
+  parseCurrencyExchangeRateResponse,
+  parseGlobalQuoteResponse,
+  parseAlphaCryptoSymbol,
 } from './alphaVantageQuirks';
 import { logger } from '../../../config/logger';
 import { withAlphaVantageThrottle } from '../../alphaVantageThrottle';
+import { env } from '../../../config/env';
 
 /**
  * Alpha Vantage market data provider.
@@ -86,22 +90,46 @@ export class AlphaVantageProvider implements MarketDataProvider {
         queryParams.interval = params.interval;
       }
 
-      // Make API request
+      const quoteParams = env.ALPHAVANTAGE_ENRICH_QUOTES
+        ? this.buildQuoteQueryParams(symbol, assetClass)
+        : null;
+
       logger.debug('Alpha Vantage API request', {
         symbol,
         assetClass,
         func: params.func,
         interval: params.interval,
+        enrichQuotes: !!quoteParams,
       });
 
-      const response = await withAlphaVantageThrottle(() =>
-        Promise.race([
-          this.httpClient.get('', { params: queryParams }),
-          this.createTimeoutPromise(),
-        ])
-      );
+      const fetchSeries = () =>
+        this.httpClient.get('', {
+          params: queryParams,
+        });
 
-      const json = response.data;
+      const fetchQuote = quoteParams
+        ? () => this.httpClient.get('', { params: quoteParams })
+        : null;
+
+      let seriesResponse: AxiosResponse;
+      let quoteResponse: AxiosResponse | null = null;
+
+      if (fetchQuote) {
+        [seriesResponse, quoteResponse] = await Promise.all([
+          withAlphaVantageThrottle(() =>
+            Promise.race([fetchSeries(), this.createTimeoutPromise()])
+          ),
+          withAlphaVantageThrottle(() =>
+            Promise.race([fetchQuote(), this.createTimeoutPromise()])
+          ),
+        ]);
+      } else {
+        seriesResponse = await withAlphaVantageThrottle(() =>
+          Promise.race([fetchSeries(), this.createTimeoutPromise()])
+        );
+      }
+
+      const json = seriesResponse.data;
 
       // Check for Alpha Vantage-specific errors
       const errorInfo = detectAlphaVantageError(json);
@@ -114,8 +142,27 @@ export class AlphaVantageProvider implements MarketDataProvider {
         }
       }
 
-      // Parse response into RawMarketData
       const rawData = parseTimeSeriesResponse(json, params, symbol, assetClass);
+
+      if (quoteResponse) {
+        const qJson = quoteResponse.data;
+        const qErr = detectAlphaVantageError(qJson);
+        if (!qErr.isError) {
+          const enriched =
+            assetClass === 'EQUITY'
+              ? parseGlobalQuoteResponse(qJson)
+              : parseCurrencyExchangeRateResponse(qJson);
+          if (enriched) {
+            rawData.lastPrice = enriched.lastPrice;
+            rawData.timestamp = enriched.timestamp;
+          }
+        } else {
+          logger.debug('Alpha Vantage quote enrichment skipped', {
+            symbol,
+            reason: qErr.reason,
+          });
+        }
+      }
 
       logger.debug('Alpha Vantage API response parsed', {
         symbol,
@@ -168,5 +215,48 @@ export class AlphaVantageProvider implements MarketDataProvider {
         reject(new Error(`Alpha Vantage request timed out after ${this.timeoutMs}ms`));
       }, this.timeoutMs);
     });
+  }
+
+  /**
+   * GLOBAL_QUOTE (equities) or CURRENCY_EXCHANGE_RATE (FX + crypto vs fiat) for spot-aligned last price.
+   */
+  private buildQuoteQueryParams(symbol: string, assetClass: AssetClass): Record<string, string> | null {
+    const base: Record<string, string> = {
+      apikey: this.apiKey,
+      datatype: 'json',
+    };
+
+    if (assetClass === 'EQUITY') {
+      return {
+        ...base,
+        function: 'GLOBAL_QUOTE',
+        symbol: symbol.toUpperCase(),
+      };
+    }
+
+    if (assetClass === 'FX') {
+      const m = symbol.match(/^([A-Z]{3})([A-Z]{3})$/);
+      if (!m) {
+        return null;
+      }
+      return {
+        ...base,
+        function: 'CURRENCY_EXCHANGE_RATE',
+        from_currency: m[1],
+        to_currency: m[2],
+      };
+    }
+
+    if (assetClass === 'CRYPTO') {
+      const { cryptoSymbol, market } = parseAlphaCryptoSymbol(symbol);
+      return {
+        ...base,
+        function: 'CURRENCY_EXCHANGE_RATE',
+        from_currency: cryptoSymbol,
+        to_currency: market,
+      };
+    }
+
+    return null;
   }
 }

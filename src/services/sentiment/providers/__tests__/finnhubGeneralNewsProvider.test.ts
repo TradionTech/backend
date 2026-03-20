@@ -65,9 +65,10 @@ describe('FinnhubGeneralNewsProvider', () => {
       expect(signals.length).toBeLessThanOrEqual(10);
       signals.forEach((s) => {
         expect(s.source).toBe('finnhub_general_news');
-        expect(s.dimension).toBe('headline_lexicon');
+        expect(s.dimension).toBe('headline_category_lexicon');
         expect(s.score).toBeGreaterThanOrEqual(-1);
         expect(s.score).toBeLessThanOrEqual(1);
+        expect(s.weight).toBeGreaterThan(0);
       });
     });
 

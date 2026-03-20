@@ -14,6 +14,7 @@ import { FinnhubWebSocketService } from '../services/finnhub/finnhubWebSocketSer
 import type { FinnhubWSMessage, FinnhubTradeItem } from '../services/finnhub/finnhubWebSocketTypes';
 import {
   getPrioritySymbols,
+  getRotationCandidates,
   FINNHUB_WS_SYMBOL_LIMIT,
 } from '../services/finnhub/prioritySymbols';
 import { PriceSnapshotState } from '../services/finnhub/priceSnapshotState';
@@ -38,9 +39,16 @@ export function attachPriceWebSocket(): PriceWebSocketRoute | null {
     ? env.FINNHUB_WS_SYMBOLS.split(',').map((s) => s.trim()).filter(Boolean)
     : undefined;
   const symbols = getPrioritySymbols(symbolOverride, symbolLimit);
+  const activeSymbols = [...symbols];
+  const lastTradeAtBySymbol = new Map<string, number>();
+  symbols.forEach((s) => lastTradeAtBySymbol.set(s, 0));
+  const rotationCandidates = getRotationCandidates(activeSymbols);
 
-  const snapshotState = new PriceSnapshotState(symbols);
+  const snapshotState = new PriceSnapshotState(activeSymbols);
   const snapshotIntervalMs = Math.max(1000, Math.min(env.FINNHUB_WS_SNAPSHOT_INTERVAL_MS ?? 2000, 60_000));
+  const silenceThresholdMs = Math.max(60_000, snapshotIntervalMs * 180); // ~3 minutes at 1s snapshots
+  const healthCheckIntervalMs = Math.max(15_000, Math.min(snapshotIntervalMs * 30, 120_000));
+  const startedAtMs = Date.now();
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -51,6 +59,9 @@ export function attachPriceWebSocket(): PriceWebSocketRoute | null {
       for (const item of message.data as FinnhubTradeItem[]) {
         if (item.s && typeof item.p === 'number') {
           snapshotState.updateFromTrade(item.s, item.p, item.t);
+          if (lastTradeAtBySymbol.has(item.s)) {
+            lastTradeAtBySymbol.set(item.s, Date.now());
+          }
         }
       }
       const payload = JSON.stringify(message);
@@ -61,9 +72,9 @@ export function attachPriceWebSocket(): PriceWebSocketRoute | null {
       });
     },
     onConnected() {
-      symbols.forEach((s) => finnhub.subscribe(s));
+      activeSymbols.forEach((s) => finnhub.subscribe(s));
       logger.info('Finnhub price WebSocket subscribed to symbols', {
-        count: symbols.length,
+        count: activeSymbols.length,
         limit: FINNHUB_WS_SYMBOL_LIMIT,
       });
     },
@@ -77,12 +88,49 @@ export function attachPriceWebSocket(): PriceWebSocketRoute | null {
     ws.send(
       JSON.stringify({
         type: 'symbols',
-        symbols,
+        symbols: activeSymbols,
         limit: FINNHUB_WS_SYMBOL_LIMIT,
         snapshotIntervalMs,
       })
     );
   });
+
+  const rotateSilentSymbol = (silentSymbol: string): void => {
+    while (rotationCandidates.length > 0) {
+      const replacement = rotationCandidates.shift()!;
+      if (activeSymbols.includes(replacement)) continue;
+
+      const idx = activeSymbols.indexOf(silentSymbol);
+      if (idx < 0) return;
+
+      activeSymbols[idx] = replacement;
+      lastTradeAtBySymbol.delete(silentSymbol);
+      lastTradeAtBySymbol.set(replacement, 0);
+      snapshotState.removeSymbol(silentSymbol);
+      snapshotState.addSymbol(replacement);
+      finnhub.unsubscribe(silentSymbol);
+      finnhub.subscribe(replacement);
+
+      logger.warn('Rotated silent Finnhub symbol', {
+        removed: silentSymbol,
+        added: replacement,
+        remainingCandidates: rotationCandidates.length,
+      });
+
+      const payload = JSON.stringify({
+        type: 'symbols',
+        symbols: activeSymbols,
+        limit: FINNHUB_WS_SYMBOL_LIMIT,
+        snapshotIntervalMs,
+      });
+      wss.clients.forEach((client) => {
+        if (client.readyState === 1) {
+          (client as WebSocket).send(payload);
+        }
+      });
+      return;
+    }
+  };
 
   // Enriched snapshot on a timer: pct change vs day open, SMA5, SMA20
   const snapshotTimer = setInterval(() => {
@@ -102,6 +150,20 @@ export function attachPriceWebSocket(): PriceWebSocketRoute | null {
     });
   }, snapshotIntervalMs);
 
-  logger.info(`Price WebSocket server listening on path ${PRICE_WS_PATH} (${symbols.length} symbols, snapshot every ${snapshotIntervalMs}ms)`);
+  const healthTimer = setInterval(() => {
+    const now = Date.now();
+    if (now - startedAtMs < silenceThresholdMs) return;
+    for (const symbol of [...activeSymbols]) {
+      const last = lastTradeAtBySymbol.get(symbol) ?? 0;
+      if (last > 0 && now - last < silenceThresholdMs) continue;
+      rotateSilentSymbol(symbol);
+    }
+  }, healthCheckIntervalMs);
+  (healthTimer as any).unref?.();
+  (snapshotTimer as any).unref?.();
+
+  logger.info(
+    `Price WebSocket server listening on path ${PRICE_WS_PATH} (${activeSymbols.length} symbols, snapshot every ${snapshotIntervalMs}ms, silence threshold ${silenceThresholdMs}ms)`
+  );
   return { wss, path: PRICE_WS_PATH };
 }

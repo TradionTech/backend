@@ -81,6 +81,30 @@ describe('MarketContextService', () => {
       expect(result.reason).toBe('PROVIDER_ERROR');
       expect(result.error).toBeDefined();
     });
+
+    it('should autocorrect symbol typos before provider request', async () => {
+      const mockRawData: RawMarketData = {
+        symbol: 'GBPUSD',
+        assetClass: 'FX',
+        candles: [
+          { timestamp: Date.now() - 60000, open: 1.27, high: 1.271, low: 1.269, close: 1.2705 },
+          { timestamp: Date.now(), open: 1.2705, high: 1.272, low: 1.27, close: 1.2718 },
+        ],
+        timestamp: Date.now(),
+        provider: 'dummy',
+      };
+      mockProvider.getSnapshot.mockResolvedValue(mockRawData);
+
+      const result = await service.getContext({
+        symbol: 'GPBUSD',
+        assetClass: 'FX',
+      });
+
+      expect(result.contextAvailable).toBe(true);
+      expect(mockProvider.getSnapshot).toHaveBeenCalledWith(
+        expect.objectContaining({ symbol: 'GBPUSD', assetClass: 'FX' })
+      );
+    });
   });
 
   describe('buildContext', () => {

@@ -37,36 +37,67 @@ export const DEFAULT_PRIORITY_SYMBOLS: string[] = [
   'BINANCE:AVAXUSDT',
   'BINANCE:DOTUSDT',
   'BINANCE:LINKUSDT',
-  'BINANCE:MATICUSDT',
+  'BINANCE:POLUSDT',
   'BINANCE:LTCUSDT',
   'BINANCE:UNIUSDT',
   'BINANCE:ATOMUSDT',
   // US equities – mega caps and volume leaders (25 to stay within 50 total)
-  'AAPL',
+  'SPY',
   'MSFT',
   'GOOGL',
   'AMZN',
   'NVDA',
   'META',
   'TSLA',
-  'BRK-B',
-  'JPM',
+  'QQQ',
+  'DIA',
   'AMD',
   'INTC',
   'NFLX',
-  'DIS',
-  'BAC',
-  'V',
-  'JNJ',
-  'WMT',
-  'PG',
-  'MA',
-  'UNH',
+  'IWM',
+  'KO',
+  'PFE',
+  'PEP',
+  'MRK',
+  'TMO',
+  'CSCO',
+  'ORCL',
   'HD',
   'XOM',
   'CVX',
+  'CRM',
+  'ADBE',
+];
+
+/**
+ * Reserve pool used for runtime replacement when a subscribed symbol is silent for too long.
+ * Keep symbols liquid and widely covered by Finnhub trade stream.
+ */
+export const FALLBACK_ROTATION_SYMBOLS: string[] = [
+  'OANDA:GBP_JPY',
+  'OANDA:EUR_CHF',
+  'OANDA:EUR_AUD',
+  'OANDA:GBP_CHF',
+  'BINANCE:BTCUSD',
+  'BINANCE:ETHUSD',
+  'BINANCE:TRXUSDT',
+  'BINANCE:BCHUSDT',
+  'BINANCE:ETCUSDT',
+  'BINANCE:NEARUSDT',
+  'AAPL',
+  'JPM',
+  'WMT',
   'COST',
   'ABBV',
+  'MA',
+  'UNH',
+  'PG',
+  'BAC',
+  'JNJ',
+  'AVGO',
+  'PLTR',
+  'SNOW',
+  'SHOP',
 ];
 
 /**
@@ -81,4 +112,10 @@ export function getPrioritySymbols(
     ? override.map((s) => s.trim().toUpperCase()).filter(Boolean)
     : DEFAULT_PRIORITY_SYMBOLS;
   return [...new Set(raw)].slice(0, maxSymbols);
+}
+
+export function getRotationCandidates(activeSymbols: string[]): string[] {
+  const used = new Set(activeSymbols.map((s) => s.toUpperCase()));
+  const merged = [...DEFAULT_PRIORITY_SYMBOLS, ...FALLBACK_ROTATION_SYMBOLS];
+  return [...new Set(merged.map((s) => s.toUpperCase()))].filter((s) => !used.has(s));
 }

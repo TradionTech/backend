@@ -97,6 +97,15 @@ export function getDefaultSentimentProviders(): SentimentProvider[] {
     // Provider not yet implemented or import failed, skip
   }
 
+  try {
+    const {
+      EconomicCalendarSentimentProvider,
+    } = require('./providers/economicCalendarSentimentProvider');
+    providers.push(new EconomicCalendarSentimentProvider());
+  } catch (error) {
+    // Provider not yet implemented or import failed, skip
+  }
+
   // Finnhub: only if key set and flags enabled
   if (process.env.FINNHUB_API_KEY && process.env.SENTIMENT_ENABLE_FINNHUB_EQUITY === 'true') {
     try {

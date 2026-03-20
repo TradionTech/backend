@@ -21,7 +21,7 @@ interface SymbolState {
 
 export class PriceSnapshotState {
   private readonly stateBySymbol = new Map<string, SymbolState>();
-  private readonly symbolList: string[];
+  private symbolList: string[];
 
   constructor(symbols: string[]) {
     this.symbolList = [...symbols];
@@ -34,6 +34,23 @@ export class PriceSnapshotState {
         nextPriceIndex: 0,
       });
     }
+  }
+
+  addSymbol(symbol: string): void {
+    if (this.stateBySymbol.has(symbol)) return;
+    this.symbolList.push(symbol);
+    this.stateBySymbol.set(symbol, {
+      lastPrice: 0,
+      dayOpen: 0,
+      lastDayUtc: 0,
+      prices: [],
+      nextPriceIndex: 0,
+    });
+  }
+
+  removeSymbol(symbol: string): void {
+    this.stateBySymbol.delete(symbol);
+    this.symbolList = this.symbolList.filter((s) => s !== symbol);
   }
 
   /**

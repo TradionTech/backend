@@ -2,9 +2,7 @@
  * Unit tests for FinnhubEquityNewsSentimentProvider.
  */
 
-import axios from 'axios';
 import { FinnhubEquityNewsSentimentProvider } from '../finnhubEquityNewsProvider';
-import type { AssetClass } from '../../../../types/market';
 
 jest.mock('../finnhubClient', () => ({
   createFinnhubClient: jest.fn(() => ({
@@ -33,13 +31,18 @@ describe('FinnhubEquityNewsSentimentProvider', () => {
   });
 
   describe('fetchSignals', () => {
-    it('should return 3-4 signals for valid news-sentiment response', async () => {
+    it('should return article-based signals from company-news endpoint', async () => {
+      const now = Math.floor(Date.now() / 1000);
       mockGet.mockResolvedValue({
-        data: {
-          companyNewsScore: 0.7,
-          sentiment: { bullishPercent: 0.6, bearishPercent: 0.2 },
-          buzz: { buzz: 1.2, articlesInLastWeek: 10, weeklyAverage: 8 },
-        },
+        data: [
+          {
+            id: 1,
+            headline: 'AAPL RALLY after earnings BEAT',
+            summary: 'Analysts upgrade growth outlook',
+            datetime: now,
+            url: 'https://example.com/aapl-news',
+          },
+        ],
       });
 
       const signals = await provider.fetchSignals({
@@ -48,17 +51,25 @@ describe('FinnhubEquityNewsSentimentProvider', () => {
         windowMinutes: 240,
       });
 
-      expect(signals.length).toBeGreaterThanOrEqual(3);
-      expect(signals.length).toBeLessThanOrEqual(4);
+      expect(mockGet).toHaveBeenCalledWith(
+        '/company-news',
+        expect.objectContaining({
+          params: expect.objectContaining({
+            symbol: 'AAPL',
+            from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+            to: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+          }),
+        })
+      );
+      expect(signals.length).toBeGreaterThanOrEqual(1);
       expect(signals.every((s) => s.source === 'finnhub_equity_news')).toBe(true);
       expect(signals.every((s) => s.symbol === 'AAPL')).toBe(true);
       const dimensions = signals.map((s) => s.dimension);
-      expect(dimensions).toContain('companyNewsScore');
-      expect(dimensions).toContain('bull_vs_bear');
-      expect(dimensions).toContain('buzz_intensity');
+      expect(dimensions).toContain('company_news_lexicon');
       signals.forEach((s) => {
         expect(s.score).toBeGreaterThanOrEqual(-1);
         expect(s.score).toBeLessThanOrEqual(1);
+        expect(s.weight).toBeGreaterThan(0);
       });
     });
 

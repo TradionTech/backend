@@ -1,8 +1,8 @@
 /**
  * Finnhub Equity News Sentiment Provider
  *
- * Uses Finnhub News Sentiment API for stocks: companyNewsScore,
- * bullish/bearish percent, and buzz.
+ * Uses Finnhub Company News API for stocks (free-tier compatible):
+ * GET /company-news?symbol=X&from=YYYY-MM-DD&to=YYYY-MM-DD
  */
 
 import { randomUUID } from 'crypto';
@@ -12,20 +12,28 @@ import type { SentimentProvider, FetchSignalsArgs } from '../sentimentProvider';
 import { createFinnhubClient } from './finnhubClient';
 import { logger } from '../../../config/logger';
 
-interface FinnhubNewsSentimentResponse {
-  companyNewsScore?: number;
-  sectorAverageBullishPercent?: number;
-  sectorAverageNewsScore?: number;
-  sentiment?: {
-    bullishPercent?: number;
-    bearishPercent?: number;
-  };
-  buzz?: {
-    articlesInLastWeek?: number;
-    buzz?: number;
-    weeklyAverage?: number;
-  };
-  symbol?: string;
+interface FinnhubCompanyNewsItem {
+  id?: number;
+  headline?: string;
+  summary?: string;
+  datetime?: number; // unix seconds
+  url?: string;
+}
+
+const MAX_SIGNALS_PER_REQUEST = 10;
+const POSITIVE_KEYWORDS = ['BEAT', 'RALLY', 'BULLISH', 'UPGRADE', 'SURGE', 'GROWTH', 'SOAR'];
+const NEGATIVE_KEYWORDS = ['MISS', 'BEARISH', 'DOWNGRADE', 'PLUNGE', 'SLUMP', 'SELL-OFF', 'CUT'];
+
+function toDateString(d: Date): string {
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function lexiconScore(text: string): number {
+  const upper = text.toUpperCase();
+  let score = 0;
+  if (POSITIVE_KEYWORDS.some((k) => upper.includes(k))) score += 0.7;
+  if (NEGATIVE_KEYWORDS.some((k) => upper.includes(k))) score -= 0.7;
+  return Math.max(-1, Math.min(1, score));
 }
 
 export class FinnhubEquityNewsSentimentProvider implements SentimentProvider {
@@ -36,60 +44,46 @@ export class FinnhubEquityNewsSentimentProvider implements SentimentProvider {
   }
 
   async fetchSignals(args: FetchSignalsArgs): Promise<RawSentimentSignal[]> {
-    const { symbol, assetClass, windowMinutes } = args;
+    const { symbol, assetClass, windowMinutes, newsFromDate } = args;
 
     try {
       const client = createFinnhubClient();
-      const { data } = await client.get<FinnhubNewsSentimentResponse>(
-        '/news-sentiment',
-        { params: { symbol: symbol.toUpperCase() } }
-      );
-
       const now = new Date();
+      const from = newsFromDate ?? new Date(now.getTime() - windowMinutes * 60 * 1000);
+      const { data: articles } = await client.get<FinnhubCompanyNewsItem[]>('/company-news', {
+        params: {
+          symbol: symbol.toUpperCase(),
+          from: toDateString(from),
+          to: toDateString(now),
+        },
+      });
+
+      if (!Array.isArray(articles)) return [];
+
       const signals: RawSentimentSignal[] = [];
-      const base: Omit<RawSentimentSignal, 'score' | 'dimension' | 'details'> = {
-        id: randomUUID(),
-        symbol,
-        source: this.name,
-        scaleMin: -1,
-        scaleMax: 1,
-        weight: 1.0,
-        timestamp: now,
-      };
+      const cutoffMs = from.getTime();
+      for (const article of articles) {
+        if (signals.length >= MAX_SIGNALS_PER_REQUEST) break;
+        const ts = article.datetime != null ? article.datetime * 1000 : null;
+        if (ts == null || ts < cutoffMs) continue;
 
-      if (typeof data.companyNewsScore === 'number') {
-        const score = data.companyNewsScore * 2 - 1;
+        const text = `${article.headline || ''} ${article.summary || ''}`;
+        const score = lexiconScore(text);
+        const ageHours = Math.max(0, (now.getTime() - ts) / 3600000);
+        const recencyBoost = ageHours <= 12 ? 0.15 : 0;
+        const weight = Math.max(0.35, Math.min(1, 0.6 + recencyBoost));
         signals.push({
-          ...base,
           id: randomUUID(),
-          score: Math.max(-1, Math.min(1, score)),
-          dimension: 'companyNewsScore',
-        });
-      }
-
-      if (data.sentiment) {
-        const { bullishPercent, bearishPercent } = data.sentiment;
-        if (
-          typeof bullishPercent === 'number' &&
-          typeof bearishPercent === 'number'
-        ) {
-          const balance = bullishPercent - bearishPercent;
-          signals.push({
-            ...base,
-            id: randomUUID(),
-            score: Math.max(-1, Math.min(1, balance)),
-            dimension: 'bull_vs_bear',
-          });
-        }
-      }
-
-      if (data.buzz && typeof data.buzz.buzz === 'number') {
-        const attentionScore = Math.tanh((data.buzz.buzz - 1) / 0.5);
-        signals.push({
-          ...base,
-          id: randomUUID(),
-          score: Math.max(-1, Math.min(1, attentionScore)),
-          dimension: 'buzz_intensity',
+          symbol,
+          source: this.name,
+          scaleMin: -1,
+          scaleMax: 1,
+          weight,
+          timestamp: new Date(ts),
+          score,
+          label: 'company_news',
+          dimension: 'company_news_lexicon',
+          details: { headline: article.headline, url: article.url },
         });
       }
 

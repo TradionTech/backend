@@ -16,6 +16,7 @@ import { AlphaVantageProvider } from './providers/alphaVantageProvider';
 import { marketContextIntentExtractor } from './marketContextIntentExtractor';
 import { inferAssetClass, isBareCurrencyCode, toCanonicalFxSymbol } from './assetClassInferrer';
 import { mapTimeframeHint, getDefaultTimeframe } from './timeframeMapper';
+import { resolveMarketSymbol } from './symbolResolver';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 
@@ -89,6 +90,25 @@ export class MarketContextService {
         };
       }
 
+      // Step 1b: Resolve symbol typos / aliases / company names into canonical symbols
+      const resolved = resolveMarketSymbol({
+        symbol: enrichedRequest.symbol,
+        assetClass: enrichedRequest.assetClass,
+        rawQuery: enrichedRequest.rawQuery,
+      });
+      enrichedRequest = {
+        ...enrichedRequest,
+        symbol: resolved.symbol,
+        assetClass: resolved.assetClass,
+      };
+
+      if (!enrichedRequest.symbol) {
+        return {
+          contextAvailable: false,
+          reason: 'NO_SYMBOL',
+        };
+      }
+
       // Step 2: Infer asset class if not provided
       if (!enrichedRequest.assetClass) {
         enrichedRequest.assetClass = inferAssetClass(enrichedRequest.symbol);
@@ -112,7 +132,9 @@ export class MarketContextService {
         return {
           contextAvailable: false,
           reason: 'PROVIDER_ERROR',
-          error: (error as Error).message,
+          error: resolved.issues?.length
+            ? `${(error as Error).message} (${resolved.issues.join(', ')})`
+            : (error as Error).message,
         };
       }
 

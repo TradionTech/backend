@@ -1322,6 +1322,7 @@ Remember: Always respect the data quality flags. If confidence is low or data is
       alpha_vantage_news: 'News sentiment',
       finnhub_general_news: 'General news',
       finnhub_equity_news: 'Equity news',
+      economic_calendar: 'Economic calendar',
     };
     if (rawStats.bySource.length > 0) {
       sections.push(`\nBy Source:`);

@@ -217,11 +217,13 @@ Format your response clearly with these three section headers. Be concise but th
   private getResponseStructureJson(): string {
     return `RESPONSE FORMAT (REQUIRED - JSON):
 
-You MUST respond with a valid JSON object only. No markdown, no code fence, no extra text. The object must have these keys:
-- "facts" (string): Verifiable information, current market context (if available), definitions. What is known and can be confirmed.
-- "interpretation" (string): What these facts might mean, possible scenarios, analysis of potential implications.
-- "risk_and_uncertainty" (string): Probabilities and scenarios (not certainties), caveats, limitations, what could go wrong.
+You MUST respond with a valid JSON object only. No markdown or text outside the JSON object, no code fence. The object must have these keys:
+- "facts" (string): Verifiable information, current market context (if provided in the system prompt under CURRENT MARKET CONTEXT), definitions. What is known and can be confirmed. You MAY use Markdown inside this string: **bold** for emphasis, bullet lists (- item), and \`code\` for tickers/symbols.
+- "interpretation" (string): What these facts might mean, possible scenarios, analysis of potential implications. Markdown allowed as above.
+- "risk_and_uncertainty" (string): Probabilities and scenarios (not certainties), caveats, limitations, what could go wrong. Markdown allowed as above.
 - "low_confidence" (boolean, optional): Set to true when you are uncertain, lack data, or the answer is tentative.
+
+When the system prompt includes === CURRENT MARKET CONTEXT === with price data, that data is from the trading data backend: you MUST cite those numbers in facts (last price, change, range, freshness) and must NOT claim you lack real-time or provider data for that instrument.
 
 Example shape: {"facts":"...","interpretation":"...","risk_and_uncertainty":"...","low_confidence":false}`;
   }
@@ -412,6 +414,9 @@ Structure your response to comprehensively address each intent while maintaining
       `- This MarketContext is the canonical source of truth for current market conditions.`
     );
     sections.push(`- Use this data when relevant to answer the user's question.`);
+    sections.push(
+      `- This data comes from the app's market data provider (e.g. Alpha Vantage): you are NOT "without access" to it—quote it explicitly in the facts and cite staleness if shown.`
+    );
 
     if (!dq.isFresh) {
       sections.push(`- ⚠️ DATA IS STALE: The data quality shows isFresh=false.`);
@@ -704,7 +709,14 @@ An error occurred while building risk context. Please inform the user that risk 
     chartContext: import('../chart/chartTypes').ChartContextForLLM;
     economicCalendarContext?: EconomicCalendarContextForLLM | null;
   }): string {
-    const { userLevel, intents, primaryIntent, marketContext, chartContext, economicCalendarContext } = args;
+    const {
+      userLevel,
+      intents,
+      primaryIntent,
+      marketContext,
+      chartContext,
+      economicCalendarContext,
+    } = args;
 
     const safetyRules = this.getSafetyRules();
     const toneGuidance = this.getToneGuidance(userLevel, intents, primaryIntent);
@@ -1032,7 +1044,9 @@ Remember: Always respect the data quality flags. If there are insufficient trade
       });
     }
     if (dashboardSummary.monthlyWinRate.length > 0) {
-      sections.push(`  Monthly Win Rate (last ${Math.min(12, dashboardSummary.monthlyWinRate.length)} months):`);
+      sections.push(
+        `  Monthly Win Rate (last ${Math.min(12, dashboardSummary.monthlyWinRate.length)} months):`
+      );
       dashboardSummary.monthlyWinRate.slice(-12).forEach((m) => {
         sections.push(`    ${m.month}: ${m.winRate.toFixed(1)}%`);
       });
@@ -1195,7 +1209,14 @@ Remember: Always respect the data quality flags. If there are insufficient trade
     sentimentContext: import('../sentiment/sentimentTypes').SentimentContextForLLM;
     economicCalendarContext?: EconomicCalendarContextForLLM | null;
   }): string {
-    const { userLevel, intents, primaryIntent, marketContext, sentimentContext, economicCalendarContext } = args;
+    const {
+      userLevel,
+      intents,
+      primaryIntent,
+      marketContext,
+      sentimentContext,
+      economicCalendarContext,
+    } = args;
 
     const safetyRules = this.getSafetyRules();
     const toneGuidance = this.getToneGuidance(userLevel, intents, primaryIntent);
@@ -1304,12 +1325,12 @@ Remember: Always respect the data quality flags. If confidence is low or data is
       sections.push(`\nTop Drivers (${drivers.length}):`);
       drivers.forEach((driver, idx) => {
         const importance =
-          driver.weight >= 3 ? 'primary driver' :
-          driver.weight >= 1 ? 'important factor' :
-          'minor factor';
-        sections.push(
-          `  ${idx + 1}. ${driver.label} – ${importance}. ${driver.explanation}`
-        );
+          driver.weight >= 3
+            ? 'primary driver'
+            : driver.weight >= 1
+              ? 'important factor'
+              : 'minor factor';
+        sections.push(`  ${idx + 1}. ${driver.label} – ${importance}. ${driver.explanation}`);
       });
     } else {
       sections.push(`\nTop Drivers: None identified`);

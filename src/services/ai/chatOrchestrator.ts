@@ -245,12 +245,15 @@ export class ChatOrchestrator {
       // Step 4: Build context in parallel where possible.
       // Batch 1: market + chart (independent); symbol extraction for sentiment if needed.
       // Batch 2 (after market): risk + sentiment (risk needs market; sentiment needs symbol from batch 1 or metadata).
-      const needsMarketContext = intentResult.intents.some(
-        (item) =>
-          item.intent === 'analysis' ||
-          item.intent === 'validation' ||
-          item.intent === 'risk_evaluation'
-      );
+      const needsMarketContext =
+        intentResult.intents.some(
+          (item) =>
+            item.intent === 'analysis' ||
+            item.intent === 'validation' ||
+            item.intent === 'risk_evaluation'
+        ) ||
+        !!metadata?.instrument ||
+        this.messageContainsMarketReference(message);
       const needChart = intentResult.isChartRelated || !!metadata?.chartId;
       const needSentimentSymbol = intentResult.isSentimentRelated && !metadata?.instrument;
 
@@ -960,6 +963,9 @@ Respond to the user's message using the condensed context above. If the context 
   private messageContainsMarketReference(message: string): boolean {
     const marketKeywords = [
       'price',
+      'quote',
+      'trading at',
+      'how much',
       'chart',
       'candle',
       'trend',
@@ -981,7 +987,12 @@ Respond to the user's message using the condensed context above. If the context 
     ];
 
     const normalized = message.toLowerCase();
-    return marketKeywords.some((keyword) => normalized.includes(keyword));
+    if (marketKeywords.some((keyword) => normalized.includes(keyword))) return true;
+    // Common tickers / pairs when user doesn't say "price" (e.g. "What's BTC doing?")
+    if (/\b(btc|eth|xrp|sol|bnb|eurusd|gbpusd|usdjpy|spy|qqq|aapl|msft)\b/i.test(message)) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -991,13 +1002,13 @@ Respond to the user's message using the condensed context above. If the context 
   private formatStructuredSectionsAsPlainText(sections: StructuredResponse): string {
     const blocks: string[] = [];
     if (sections.facts?.trim()) {
-      blocks.push(`Facts\n\n${sections.facts.trim()}`);
+      blocks.push(`## Facts\n\n${sections.facts.trim()}`);
     }
     if (sections.interpretation?.trim()) {
-      blocks.push(`Interpretation\n\n${sections.interpretation.trim()}`);
+      blocks.push(`## Interpretation\n\n${sections.interpretation.trim()}`);
     }
     if (sections.risk_and_uncertainty?.trim()) {
-      blocks.push(`Risk & uncertainty\n\n${sections.risk_and_uncertainty.trim()}`);
+      blocks.push(`## Risk & uncertainty\n\n${sections.risk_and_uncertainty.trim()}`);
     }
     return blocks.join('\n\n');
   }
@@ -1006,7 +1017,10 @@ Respond to the user's message using the condensed context above. If the context 
    * After the model stream is buffered and parsed, replay the final plain-text answer in small
    * chunks so SSE `content` events match what the user reads (not raw JSON token deltas).
    */
-  private async replayStreamContent(onChunk: (text: string) => void, fullText: string): Promise<void> {
+  private async replayStreamContent(
+    onChunk: (text: string) => void,
+    fullText: string
+  ): Promise<void> {
     const chunkChars = 48;
     for (let i = 0; i < fullText.length; i += chunkChars) {
       onChunk(fullText.slice(i, i + chunkChars));

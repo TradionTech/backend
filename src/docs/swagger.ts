@@ -93,11 +93,11 @@ const swaggerDefinition = {
           sections: {
             type: 'object',
             description:
-              'Structured body for chat UI: map to three blocks (headings optional). Prefer these fields over parsing `message` or any JSON string.',
+              'Structured body for chat UI: map to three blocks. Values may include Markdown (**bold**, lists, `tickers`). Prefer these fields over parsing `message` or any JSON string.',
             properties: {
-              facts: { type: 'string' },
-              interpretation: { type: 'string' },
-              risk_and_uncertainty: { type: 'string' },
+              facts: { type: 'string', description: 'Markdown allowed in string content.' },
+              interpretation: { type: 'string', description: 'Markdown allowed in string content.' },
+              risk_and_uncertainty: { type: 'string', description: 'Markdown allowed in string content.' },
             },
           },
           intent: { type: 'string', example: 'analysis' },

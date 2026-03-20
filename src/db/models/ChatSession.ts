@@ -11,6 +11,7 @@ import { DataTypes, Model, Sequelize } from 'sequelize';
 export class ChatSession extends Model {
   declare id: string;
   declare userId: string;
+  declare title: string | null;
   declare context: object | null; // Structured metadata (see above)
 }
 
@@ -19,6 +20,7 @@ export function initChatSession(sequelize: Sequelize) {
     {
       id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
       userId: { type: DataTypes.STRING, allowNull: false },
+      title: { type: DataTypes.STRING(128), allowNull: true },
       context: { type: DataTypes.JSONB, allowNull: true }
     },
     { sequelize, modelName: 'ChatSession', tableName: 'chat_sessions' }

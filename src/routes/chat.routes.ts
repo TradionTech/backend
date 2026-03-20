@@ -23,5 +23,7 @@ const ChatSchema = Joi.object({
 
 router.post('/', authGuard(), validateBody(ChatSchema), chatController.postChat);
 router.post('/no-stream', authGuard(), validateBody(ChatSchema), chatController.postChatNoStream);
+router.get('/conversations', authGuard(), chatController.getConversations);
+router.get('/conversations/:conversationId', authGuard(), chatController.getConversationHistory);
 
 export default router;

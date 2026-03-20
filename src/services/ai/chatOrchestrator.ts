@@ -448,6 +448,7 @@ export class ChatOrchestrator {
 
       // Step 7: Save user message
       const userMessageRecord = await conversationStore.saveMessage(session.id, 'user', message);
+      await conversationStore.ensureTitleFromFirstUserMessage(session.id, message);
       const userMessageId = userMessageRecord.id;
 
       // Step 8: Call chat model provider (streaming or one-shot; with 413 retry via summarized context)

@@ -1,9 +1,15 @@
 import { ConversationStore } from '../conversationStore';
 import { ChatMessage } from '../../../db/models/ChatMessage';
+import { ChatSession } from '../../../db/models/ChatSession';
+import { getChatLLM } from '../llm/chatLLM';
 
 jest.mock('../../../db/models/ChatMessage');
+jest.mock('../../../db/models/ChatSession');
+jest.mock('../llm/chatLLM');
 
 const MockChatMessage = ChatMessage as jest.Mocked<typeof ChatMessage>;
+const MockChatSession = ChatSession as jest.Mocked<typeof ChatSession>;
+const mockGetChatLLM = getChatLLM as jest.MockedFunction<typeof getChatLLM>;
 
 describe('ConversationStore', () => {
   let store: ConversationStore;
@@ -11,6 +17,14 @@ describe('ConversationStore', () => {
   beforeEach(() => {
     store = new ConversationStore();
     jest.clearAllMocks();
+    mockGetChatLLM.mockReturnValue({
+      completeChat: jest.fn().mockResolvedValue({
+        id: 'title-1',
+        content: 'Risk Management for Forex Intraday',
+        finishReason: 'stop',
+      }),
+      completeChatStream: jest.fn(),
+    } as any);
   });
 
   describe('getRecentMessages', () => {
@@ -43,6 +57,30 @@ describe('ConversationStore', () => {
       expect(result).toHaveLength(12);
       expect(result[0].content).toBe('Message 4');
       expect(result[11].content).toBe('Message 15');
+    });
+  });
+
+  describe('ensureTitleFromFirstUserMessage', () => {
+    it('sets title from first user message', async () => {
+      const updateMock = jest.fn().mockResolvedValue(undefined);
+      MockChatSession.findByPk.mockResolvedValue({
+        id: 'session-1',
+        context: null,
+        update: updateMock,
+      } as any);
+      MockChatMessage.count.mockResolvedValue(1 as any);
+
+      await store.ensureTitleFromFirstUserMessage(
+        'session-1',
+        'What is the best risk management strategy for forex intraday trading?'
+      );
+
+      expect(MockChatMessage.count).toHaveBeenCalledWith({
+        where: { sessionId: 'session-1', role: 'user' },
+      });
+      expect(updateMock).toHaveBeenCalledWith({
+        title: 'Risk Management for Forex Intraday',
+      });
     });
   });
 });

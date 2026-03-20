@@ -6,6 +6,7 @@ import { Usage } from '../services/usage/usage';
 import { Limits } from '../services/plans/limits';
 import { chatOrchestrator } from '../services/ai/chatOrchestrator';
 import { resolveModelId, InvalidModelForPlanError } from '../services/ai/llm/modelResolver';
+import { conversationStore } from '../services/ai/conversationStore';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 
@@ -40,6 +41,63 @@ function parseImagePayload(
 }
 
 export const chatController = {
+  getConversations: async (req: Request, res: Response) => {
+    try {
+      const { userId } = getAuth(req);
+      if (!userId) {
+        return res.status(401).json({
+          error: { code: 'UNAUTHORIZED', message: 'Unauthorized' },
+        });
+      }
+
+      const limit = Math.max(1, Math.min(parseInt(String(req.query.limit ?? '20'), 10) || 20, 100));
+      const offset = Math.max(0, parseInt(String(req.query.offset ?? '0'), 10) || 0);
+      const conversations = await conversationStore.listConversations(userId, limit, offset);
+      return res.json({
+        conversations,
+        limit,
+        offset,
+      });
+    } catch (error) {
+      const err = error as Error;
+      logger.error('Get conversations error', { error: err.message, stack: err.stack });
+      return res.status(500).json({
+        error: { code: 'PROVIDER_ERROR', message: 'Failed to fetch conversations' },
+      });
+    }
+  },
+
+  getConversationHistory: async (req: Request, res: Response) => {
+    try {
+      const { userId } = getAuth(req);
+      if (!userId) {
+        return res.status(401).json({
+          error: { code: 'UNAUTHORIZED', message: 'Unauthorized' },
+        });
+      }
+      const conversationId = String(req.params.conversationId || '');
+      if (!conversationId) {
+        return res.status(400).json({
+          error: { code: 'VALIDATION_ERROR', message: 'conversationId is required' },
+        });
+      }
+
+      const history = await conversationStore.getConversationHistory(userId, conversationId);
+      if (!history) {
+        return res.status(404).json({
+          error: { code: 'NOT_FOUND', message: 'Conversation not found' },
+        });
+      }
+      return res.json(history);
+    } catch (error) {
+      const err = error as Error;
+      logger.error('Get conversation history error', { error: err.message, stack: err.stack });
+      return res.status(500).json({
+        error: { code: 'PROVIDER_ERROR', message: 'Failed to fetch conversation history' },
+      });
+    }
+  },
+
   postChat: async (req: Request, res: Response) => {
     try {
       const { userId } = getAuth(req);

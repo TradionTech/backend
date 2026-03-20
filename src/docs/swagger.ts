@@ -80,12 +80,118 @@ const swaggerDefinition = {
       },
       ChatResponse: {
         type: 'object',
+        description:
+          'Non-streaming chat response payload returned by POST /chat/no-stream and equivalent final done payload fields in SSE mode.',
         properties: {
+          conversation_id: { type: 'string', format: 'uuid' },
           response_id: { type: 'string', example: 'resp_abcd1234' },
-          text: { type: 'string' },
-          sources: {
+          message: { type: 'string' },
+          sections: {
+            type: 'object',
+            properties: {
+              facts: { type: 'string' },
+              interpretation: { type: 'string' },
+              risk_and_uncertainty: { type: 'string' },
+            },
+          },
+          intent: { type: 'string', example: 'analysis' },
+          user_level: { type: 'string', enum: ['novice', 'intermediate', 'advanced'] },
+          low_confidence: { type: 'boolean', example: false },
+          safety_fallback: { type: 'boolean', example: false },
+        },
+        required: [
+          'conversation_id',
+          'response_id',
+          'message',
+          'sections',
+          'intent',
+          'user_level',
+          'low_confidence',
+        ],
+      },
+      ChatStreamEvent: {
+        type: 'object',
+        description: 'Server-Sent Events payload for POST /chat',
+        properties: {
+          type: { type: 'string', enum: ['progress', 'content', 'done'] },
+          stage: { type: 'string', enum: ['context', 'generating', 'safety_check'] },
+          content: { type: 'string', description: 'Present when type=content' },
+          conversation_id: { type: 'string', format: 'uuid' },
+          response_id: { type: 'string' },
+          message: { type: 'string' },
+          sections: {
+            type: 'object',
+            properties: {
+              facts: { type: 'string' },
+              interpretation: { type: 'string' },
+              risk_and_uncertainty: { type: 'string' },
+            },
+          },
+          intent: { type: 'string' },
+          user_level: { type: 'string', enum: ['novice', 'intermediate', 'advanced'] },
+          low_confidence: { type: 'boolean' },
+          safety_fallback: { type: 'boolean' },
+        },
+        examples: {
+          progress: {
+            value: {
+              type: 'progress',
+              stage: 'generating',
+            },
+          },
+          content: {
+            value: {
+              type: 'content',
+              content: 'EURUSD is currently trading around...',
+            },
+          },
+          done: {
+            value: {
+              type: 'done',
+              conversation_id: '6f56bdbf-8f9a-4fd1-ab1d-d67f9e3f85a0',
+              response_id: 'resp_123',
+              message: 'EURUSD is currently trading around 1.10...',
+              sections: {
+                facts: 'Market data for EURUSD...',
+                interpretation: 'Price action suggests...',
+                risk_and_uncertainty: 'Data may be stale and markets can move quickly.',
+              },
+              intent: 'analysis',
+              user_level: 'intermediate',
+              low_confidence: false,
+              safety_fallback: false,
+            },
+          },
+        },
+      },
+      ConversationSummary: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          title: { type: 'string', example: 'Risk Management for EURUSD' },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      ConversationHistoryMessage: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          role: { type: 'string', enum: ['user', 'assistant', 'system'] },
+          content: { type: 'string' },
+          createdAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      ConversationHistoryResponse: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          title: { type: 'string', example: 'Risk Management for EURUSD' },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+          messages: {
             type: 'array',
-            items: { type: 'string' },
+            items: { $ref: '#/components/schemas/ConversationHistoryMessage' },
           },
         },
       },
@@ -496,6 +602,8 @@ const swaggerDefinition = {
       post: {
         tags: ['Chat'],
         summary: 'Send a message to the AI assistant',
+        description:
+          'Streaming endpoint (SSE). Emits progress/content events and a final done event with the same fields as ChatResponse.',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -505,9 +613,22 @@ const swaggerDefinition = {
         },
         responses: {
           200: {
-            description: 'Assistant response',
+            description: 'SSE stream of chat events',
             content: {
-              'application/json': { schema: { $ref: '#/components/schemas/ChatResponse' } },
+              'text/event-stream': {
+                schema: { $ref: '#/components/schemas/ChatStreamEvent' },
+                examples: {
+                  streamSequence: {
+                    summary: 'Typical SSE event sequence',
+                    value:
+                      'data: {"type":"progress","stage":"context"}\n\n' +
+                      'data: {"type":"progress","stage":"generating"}\n\n' +
+                      'data: {"type":"content","content":"EURUSD is currently trading around "}\n\n' +
+                      'data: {"type":"content","content":"1.10 with moderate volatility."}\n\n' +
+                      'data: {"type":"done","conversation_id":"6f56bdbf-8f9a-4fd1-ab1d-d67f9e3f85a0","response_id":"resp_123","message":"EURUSD is currently trading around 1.10 with moderate volatility.","sections":{"facts":"...","interpretation":"...","risk_and_uncertainty":"..."},"intent":"analysis","user_level":"intermediate","low_confidence":false,"safety_fallback":false}\n\n',
+                  },
+                },
+              },
             },
           },
           401: {
@@ -524,6 +645,97 @@ const swaggerDefinition = {
           },
           422: {
             description: 'Validation error',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/chat/conversations': {
+      get: {
+        tags: ['Chat'],
+        summary: 'List conversation sessions for current user',
+        description:
+          'Returns paginated chat sessions ordered by latest activity. Includes AI-generated title for history sidebar.',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'query',
+            name: 'limit',
+            required: false,
+            schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+            description: 'Max conversations to return.',
+          },
+          {
+            in: 'query',
+            name: 'offset',
+            required: false,
+            schema: { type: 'integer', minimum: 0, default: 0 },
+            description: 'Pagination offset.',
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Conversation list',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    conversations: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/ConversationSummary' },
+                    },
+                    limit: { type: 'integer' },
+                    offset: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+        },
+      },
+    },
+    '/chat/conversations/{conversationId}': {
+      get: {
+        tags: ['Chat'],
+        summary: 'Get full conversation history',
+        description:
+          'Returns one conversation by id (must belong to current user) including all messages in chronological order.',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: 'path',
+            name: 'conversationId',
+            required: true,
+            schema: { type: 'string', format: 'uuid' },
+            description: 'Conversation session id.',
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Conversation history',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ConversationHistoryResponse' },
+              },
+            },
+          },
+          401: {
+            description: 'Unauthorized',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
+            },
+          },
+          404: {
+            description: 'Conversation not found',
             content: {
               'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } },
             },

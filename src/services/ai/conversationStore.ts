@@ -2,6 +2,8 @@ import { ChatSession } from '../../db/models/ChatSession';
 import { ChatMessage } from '../../db/models/ChatMessage';
 import { logger } from '../../config/logger';
 import type { GroqMessage } from './groqCompoundClient';
+import { getChatLLM } from './llm/chatLLM';
+import { env } from '../../config/env';
 
 export interface SessionMetadata {
   user_level?: 'novice' | 'intermediate' | 'advanced';
@@ -14,6 +16,59 @@ export interface SessionMetadata {
  * Handles conversation continuity by retrieving recent messages for context.
  */
 export class ConversationStore {
+  /**
+   * Deterministic fallback title when LLM title generation fails.
+   */
+  private generateFallbackTitle(message: string): string {
+    const cleaned = message
+      .replace(/\s+/g, ' ')
+      .replace(/[^\w\s'.,!?-]/g, '')
+      .trim();
+    if (!cleaned) return 'New conversation';
+    const max = 64;
+    if (cleaned.length <= max) return cleaned;
+    const sliced = cleaned.slice(0, max).trim();
+    const lastSpace = sliced.lastIndexOf(' ');
+    return `${(lastSpace > 24 ? sliced.slice(0, lastSpace) : sliced).trim()}...`;
+  }
+
+  /**
+   * Generate a short, human-like conversation title with the chat model.
+   * Falls back to deterministic truncation on any error.
+   */
+  private async generateConversationTitle(message: string): Promise<string> {
+    const fallback = this.generateFallbackTitle(message);
+    try {
+      const chatClient = getChatLLM(env.GROQ_MODEL ?? 'groq/compound');
+      const titleResponse = await chatClient.completeChat({
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Generate a concise chat title (max 12 words) from the user message. Return only the title text with no quotes or punctuation decoration.',
+          },
+          { role: 'user', content: message.trim() },
+        ],
+        modelId: env.GROQ_MODEL ?? 'groq/compound',
+        maxTokens: 24,
+        temperature: 0.2,
+      });
+      const title = (titleResponse.content || '')
+        .replace(/\s+/g, ' ')
+        .replace(/^["'\s]+|["'\s]+$/g, '')
+        .trim();
+
+      if (!title) return fallback;
+      if (title.length <= 128) return title;
+      return `${title.slice(0, 125).trim()}...`;
+    } catch (error) {
+      logger.debug('Conversation title generation fallback', {
+        error: (error as Error).message,
+      });
+      return fallback;
+    }
+  }
+
   /**
    * Get or create a conversation session for a user.
    * If conversationId is provided, retrieves existing session (must belong to user).
@@ -46,6 +101,7 @@ export class ConversationStore {
   private async createConversation(userId: string): Promise<ChatSession> {
     const session = await ChatSession.create({
       userId,
+      title: null,
       context: null,
     });
 
@@ -99,7 +155,99 @@ export class ConversationStore {
       contentLength: content.length,
     });
 
+    // Touch session so list ordering reflects latest activity.
+    await ChatSession.update({}, { where: { id: conversationId } });
+
     return message;
+  }
+
+  /**
+   * Ensure session has a title from the first user message.
+   */
+  async ensureTitleFromFirstUserMessage(conversationId: string, message: string): Promise<void> {
+    const session = await ChatSession.findByPk(conversationId);
+    if (!session) return;
+
+    const existing = session.title;
+    if (existing && existing.trim().length > 0) return;
+
+    const userMessageCount = await ChatMessage.count({
+      where: { sessionId: conversationId, role: 'user' },
+    });
+    if (userMessageCount !== 1) return;
+
+    const title = await this.generateConversationTitle(message);
+    await session.update({ title });
+  }
+
+  /**
+   * List conversation sessions for a user, newest activity first.
+   */
+  async listConversations(
+    userId: string,
+    limit: number = 20,
+    offset: number = 0
+  ): Promise<
+    Array<{
+      id: string;
+      title: string;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  > {
+    const sessions = await ChatSession.findAll({
+      where: { userId },
+      order: [['updatedAt', 'DESC']],
+      limit,
+      offset,
+    });
+    return sessions.map((s) => {
+      return {
+        id: s.id,
+        title: s.title || 'New conversation',
+        createdAt: (s as any).createdAt as Date,
+        updatedAt: (s as any).updatedAt as Date,
+      };
+    });
+  }
+
+  /**
+   * Get full chat history for one conversation owned by the user.
+   */
+  async getConversationHistory(
+    userId: string,
+    conversationId: string
+  ): Promise<{
+    id: string;
+    title: string;
+    createdAt: Date;
+    updatedAt: Date;
+    messages: Array<{
+      id: string;
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+      createdAt: Date;
+    }>;
+  } | null> {
+    const session = await ChatSession.findOne({ where: { id: conversationId, userId } });
+    if (!session) return null;
+
+    const messages = await ChatMessage.findAll({
+      where: { sessionId: conversationId },
+      order: [['createdAt', 'ASC']],
+    });
+    return {
+      id: session.id,
+      title: session.title || 'New conversation',
+      createdAt: (session as any).createdAt as Date,
+      updatedAt: (session as any).updatedAt as Date,
+      messages: messages.map((m) => ({
+        id: m.id,
+        role: m.role as 'user' | 'assistant' | 'system',
+        content: m.content,
+        createdAt: (m as any).createdAt as Date,
+      })),
+    };
   }
 
   /**

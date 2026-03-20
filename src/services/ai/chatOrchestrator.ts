@@ -469,6 +469,7 @@ export class ChatOrchestrator {
       const chatClient = getChatLLM(modelId);
       let llmResponse: Awaited<ReturnType<typeof chatClient.completeChat>>;
       if (streamCallbacks?.onChunk) {
+        // Buffer the model stream (no raw JSON/token deltas to the client); replay plain text after parse.
         llmResponse = await chatClient.completeChatStream(
           {
             messages,
@@ -478,7 +479,7 @@ export class ChatOrchestrator {
             temperature: 0.7,
             responseFormat: useJsonOutput ? { type: 'json_object' } : undefined,
           },
-          { onChunk: streamCallbacks.onChunk }
+          { onChunk: () => {} }
         );
       } else {
         try {
@@ -549,11 +550,13 @@ export class ChatOrchestrator {
       // Step 10: Parse structured sections from response (JSON when requested, else regex)
       let sections: StructuredResponse;
       let lowConfidence: boolean;
+      let usedJsonObjectSections = false;
       if (useJsonOutput) {
         const parsed = this.parseStructuredResponseFromJson(responseContent);
         if (parsed) {
           sections = parsed.sections;
           lowConfidence = parsed.low_confidence ?? this.detectLowConfidence(responseContent);
+          usedJsonObjectSections = true;
         } else {
           sections = this.parseStructuredResponse(responseContent);
           lowConfidence = this.detectLowConfidence(responseContent);
@@ -563,10 +566,19 @@ export class ChatOrchestrator {
         lowConfidence = this.detectLowConfidence(responseContent);
       }
 
-      // Step 11: Save assistant message
-      await conversationStore.saveMessage(session.id, 'assistant', responseContent);
+      const messageForClientAndPersistence = usedJsonObjectSections
+        ? this.formatStructuredSectionsAsPlainText(sections) || responseContent
+        : responseContent;
 
-      // Step 11.5: Audit log risk evaluation if risk context exists
+      // Step 11: Stream to client (replay final plain text in chunks; raw model stream was buffered above)
+      if (streamCallbacks?.onChunk && messageForClientAndPersistence.trim().length > 0) {
+        await this.replayStreamContent(streamCallbacks.onChunk, messageForClientAndPersistence);
+      }
+
+      // Step 12: Save assistant message (plain text when JSON sections were used; avoids storing duplicate raw JSON)
+      await conversationStore.saveMessage(session.id, 'assistant', messageForClientAndPersistence);
+
+      // Step 12.5: Audit log risk evaluation if risk context exists
       if (riskContext && riskContext.riskEvaluation && correlationId) {
         try {
           // Sanitize risk evaluation request (remove sensitive data if any)
@@ -610,10 +622,10 @@ export class ChatOrchestrator {
         }
       }
 
-      // Step 12: Return structured response
+      // Step 13: Return structured response
       const result: ChatResponse = {
         conversationId: session.id,
-        message: responseContent,
+        message: messageForClientAndPersistence,
         sections,
         intents: intentResult.intents.map((i) => i.intent),
         primaryIntent: intentResult.primaryIntent,
@@ -970,6 +982,38 @@ Respond to the user's message using the condensed context above. If the context 
 
     const normalized = message.toLowerCase();
     return marketKeywords.some((keyword) => normalized.includes(keyword));
+  }
+
+  /**
+   * Human-readable single string for `message` and DB when the model returned JSON sections.
+   * Clients should still prefer `sections` for structured UI (Facts / Interpretation / Risk).
+   */
+  private formatStructuredSectionsAsPlainText(sections: StructuredResponse): string {
+    const blocks: string[] = [];
+    if (sections.facts?.trim()) {
+      blocks.push(`Facts\n\n${sections.facts.trim()}`);
+    }
+    if (sections.interpretation?.trim()) {
+      blocks.push(`Interpretation\n\n${sections.interpretation.trim()}`);
+    }
+    if (sections.risk_and_uncertainty?.trim()) {
+      blocks.push(`Risk & uncertainty\n\n${sections.risk_and_uncertainty.trim()}`);
+    }
+    return blocks.join('\n\n');
+  }
+
+  /**
+   * After the model stream is buffered and parsed, replay the final plain-text answer in small
+   * chunks so SSE `content` events match what the user reads (not raw JSON token deltas).
+   */
+  private async replayStreamContent(onChunk: (text: string) => void, fullText: string): Promise<void> {
+    const chunkChars = 48;
+    for (let i = 0; i < fullText.length; i += chunkChars) {
+      onChunk(fullText.slice(i, i + chunkChars));
+      if (i + chunkChars < fullText.length) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    }
   }
 
   /**

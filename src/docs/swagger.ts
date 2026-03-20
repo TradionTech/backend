@@ -81,13 +81,19 @@ const swaggerDefinition = {
       ChatResponse: {
         type: 'object',
         description:
-          'Non-streaming chat response payload returned by POST /chat/no-stream and equivalent final done payload fields in SSE mode.',
+          'Non-streaming chat response payload returned by POST /chat/no-stream and equivalent final done payload fields in SSE mode. When the model returns structured JSON, `sections` holds the canonical fields for the UI: render Facts, Interpretation, and Risk and uncertainty from `sections.facts`, `sections.interpretation`, and `sections.risk_and_uncertainty` only—do not also print the raw JSON string. The `message` field is a plain-text rendering of those same sections (suitable for copy/paste or simple clients). During SSE, the provider stream is buffered server-side; `content` events replay that same plain text in chunks (after parsing/safety), then `done` carries the full `message` and `sections`.',
         properties: {
           conversation_id: { type: 'string', format: 'uuid' },
           response_id: { type: 'string', example: 'resp_abcd1234' },
-          message: { type: 'string' },
+          message: {
+            type: 'string',
+            description:
+              'Full assistant reply as plain text. When structured JSON was parsed, this is labeled sections (Facts / Interpretation / Risk) joined with newlines—not the raw JSON object.',
+          },
           sections: {
             type: 'object',
+            description:
+              'Structured body for chat UI: map to three blocks (headings optional). Prefer these fields over parsing `message` or any JSON string.',
             properties: {
               facts: { type: 'string' },
               interpretation: { type: 'string' },
@@ -111,11 +117,16 @@ const swaggerDefinition = {
       },
       ChatStreamEvent: {
         type: 'object',
-        description: 'Server-Sent Events payload for POST /chat',
+        description:
+          'Server-Sent Events payload for POST /chat. For type=content, chunks are replayed plain text (aligned with the final message), not raw JSON deltas from the model.',
         properties: {
           type: { type: 'string', enum: ['progress', 'content', 'done'] },
           stage: { type: 'string', enum: ['context', 'generating', 'safety_check'] },
-          content: { type: 'string', description: 'Present when type=content' },
+          content: {
+            type: 'string',
+            description:
+              'Present when type=content: successive fragments of the final assistant plain-text answer.',
+          },
           conversation_id: { type: 'string', format: 'uuid' },
           response_id: { type: 'string' },
           message: { type: 'string' },
@@ -603,7 +614,7 @@ const swaggerDefinition = {
         tags: ['Chat'],
         summary: 'Send a message to the AI assistant',
         description:
-          'Streaming endpoint (SSE). Emits progress/content events and a final done event with the same fields as ChatResponse.',
+          'Streaming endpoint (SSE). The model output is buffered until complete, then replayed as plain-text `content` chunks (matching `done.message`), plus a final `done` event with the same fields as ChatResponse.',
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,

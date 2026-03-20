@@ -19,6 +19,19 @@ export class ConversationStore {
   /**
    * Deterministic fallback title when LLM title generation fails.
    */
+  /** Strip markdown-style decoration models sometimes emit despite instructions. */
+  private sanitizeGeneratedTitle(raw: string): string {
+    let s = raw
+      .replace(/\s+/g, ' ')
+      .replace(/^["'\s]+|["'\s]+$/g, '')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/[*_`#]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return s;
+  }
+
   private generateFallbackTitle(message: string): string {
     const cleaned = message
       .replace(/\s+/g, ' ')
@@ -45,7 +58,7 @@ export class ConversationStore {
           {
             role: 'system',
             content:
-              'Generate a concise chat title (max 12 words) from the user message. Return only the title text with no quotes or punctuation decoration.',
+              'Generate a concise chat title (max 8 words) from the user message. Return only plain text: no markdown, no asterisks, bold/italic markers, headings, or other formatting.',
           },
           { role: 'user', content: message.trim() },
         ],
@@ -53,10 +66,7 @@ export class ConversationStore {
         maxTokens: 24,
         temperature: 0.2,
       });
-      const title = (titleResponse.content || '')
-        .replace(/\s+/g, ' ')
-        .replace(/^["'\s]+|["'\s]+$/g, '')
-        .trim();
+      const title = this.sanitizeGeneratedTitle(titleResponse.content || '');
 
       if (!title) return fallback;
       if (title.length <= 128) return title;

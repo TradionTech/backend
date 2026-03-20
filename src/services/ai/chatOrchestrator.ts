@@ -139,8 +139,10 @@ export class ChatOrchestrator {
     const { userId, conversationId, message, metadata, modelId } = request;
 
     try {
-      // Step 1: Get or create conversation
-      const session = await conversationStore.getOrCreateConversation(userId, conversationId);
+      // Step 1: Get or create conversation (new sessions get title from first message at create time)
+      const session = await conversationStore.getOrCreateConversation(userId, conversationId, {
+        firstMessage: message,
+      });
 
       // Step 2: Retrieve and trim conversation history (token-bounded, optional summarization)
       const { conversationHistory, systemPromptPrefix } =
@@ -448,7 +450,6 @@ export class ChatOrchestrator {
 
       // Step 7: Save user message
       const userMessageRecord = await conversationStore.saveMessage(session.id, 'user', message);
-      await conversationStore.ensureTitleFromFirstUserMessage(session.id, message);
       const userMessageId = userMessageRecord.id;
 
       // Step 8: Call chat model provider (streaming or one-shot; with 413 retry via summarized context)

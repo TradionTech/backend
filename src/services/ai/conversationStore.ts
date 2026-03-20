@@ -73,8 +73,13 @@ export class ConversationStore {
    * Get or create a conversation session for a user.
    * If conversationId is provided, retrieves existing session (must belong to user).
    * Otherwise, creates a new session.
+   * For new sessions, pass `firstMessage` so the title is generated and stored on create.
    */
-  async getOrCreateConversation(userId: string, conversationId?: string): Promise<ChatSession> {
+  async getOrCreateConversation(
+    userId: string,
+    conversationId?: string,
+    options?: { firstMessage?: string }
+  ): Promise<ChatSession> {
     if (conversationId) {
       const session = await ChatSession.findOne({
         where: { id: conversationId, userId },
@@ -86,28 +91,36 @@ export class ConversationStore {
           userId,
         });
         // Create new session if provided ID doesn't exist or doesn't belong to user
-        return this.createConversation(userId);
+        return this.createConversation(userId, options?.firstMessage);
       }
 
       return session;
     }
 
-    return this.createConversation(userId);
+    return this.createConversation(userId, options?.firstMessage);
   }
 
   /**
-   * Create a new conversation session.
+   * Create a new conversation session. When `firstMessage` is provided, generates the title
+   * before insert so the row is created with its final title.
    */
-  private async createConversation(userId: string): Promise<ChatSession> {
+  private async createConversation(userId: string, firstMessage?: string): Promise<ChatSession> {
+    let title: string | null = null;
+    const trimmed = firstMessage?.trim();
+    if (trimmed) {
+      title = await this.generateConversationTitle(trimmed);
+    }
+
     const session = await ChatSession.create({
       userId,
-      title: null,
+      title,
       context: null,
     });
 
     logger.debug('Created new conversation session', {
       sessionId: session.id,
       userId,
+      hasTitle: !!title,
     });
 
     return session;
@@ -159,25 +172,6 @@ export class ConversationStore {
     await ChatSession.update({}, { where: { id: conversationId } });
 
     return message;
-  }
-
-  /**
-   * Ensure session has a title from the first user message.
-   */
-  async ensureTitleFromFirstUserMessage(conversationId: string, message: string): Promise<void> {
-    const session = await ChatSession.findByPk(conversationId);
-    if (!session) return;
-
-    const existing = session.title;
-    if (existing && existing.trim().length > 0) return;
-
-    const userMessageCount = await ChatMessage.count({
-      where: { sessionId: conversationId, role: 'user' },
-    });
-    if (userMessageCount !== 1) return;
-
-    const title = await this.generateConversationTitle(message);
-    await session.update({ title });
   }
 
   /**

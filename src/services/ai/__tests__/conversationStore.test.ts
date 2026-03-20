@@ -60,27 +60,43 @@ describe('ConversationStore', () => {
     });
   });
 
-  describe('ensureTitleFromFirstUserMessage', () => {
-    it('sets title from first user message', async () => {
-      const updateMock = jest.fn().mockResolvedValue(undefined);
-      MockChatSession.findByPk.mockResolvedValue({
-        id: 'session-1',
-        context: null,
-        update: updateMock,
-      } as any);
-      MockChatMessage.count.mockResolvedValue(1 as any);
-
-      await store.ensureTitleFromFirstUserMessage(
-        'session-1',
-        'What is the best risk management strategy for forex intraday trading?'
-      );
-
-      expect(MockChatMessage.count).toHaveBeenCalledWith({
-        where: { sessionId: 'session-1', role: 'user' },
-      });
-      expect(updateMock).toHaveBeenCalledWith({
+  describe('getOrCreateConversation', () => {
+    it('creates a new session with generated title when firstMessage is provided', async () => {
+      MockChatSession.create.mockResolvedValue({
+        id: 'session-new',
+        userId: 'user-1',
         title: 'Risk Management for Forex Intraday',
+        context: null,
+      } as any);
+
+      const session = await store.getOrCreateConversation('user-1', undefined, {
+        firstMessage:
+          'What is the best risk management strategy for forex intraday trading?',
       });
+
+      expect(MockChatSession.create).toHaveBeenCalledWith({
+        userId: 'user-1',
+        title: 'Risk Management for Forex Intraday',
+        context: null,
+      });
+      expect(session.id).toBe('session-new');
+      expect(session.title).toBe('Risk Management for Forex Intraday');
+    });
+
+    it('returns existing session without creating', async () => {
+      MockChatSession.findOne.mockResolvedValue({
+        id: 'existing',
+        userId: 'user-1',
+        title: 'Old title',
+        context: null,
+      } as any);
+
+      const session = await store.getOrCreateConversation('user-1', 'existing', {
+        firstMessage: 'A new message',
+      });
+
+      expect(MockChatSession.create).not.toHaveBeenCalled();
+      expect(session.title).toBe('Old title');
     });
   });
 });

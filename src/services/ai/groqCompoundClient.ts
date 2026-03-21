@@ -126,7 +126,9 @@ export class GroqCompoundClient implements IChatLLMClient {
         await sleep(waitMs);
       }
     }
-    throw lastError instanceof Error ? lastError : new Error('Groq completeChatStream failed after retries');
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Groq completeChatStream failed after retries');
   }
 
   private async completeChatStreamSingleAttempt(
@@ -160,19 +162,15 @@ export class GroqCompoundClient implements IChatLLMClient {
     if (compound_custom) requestBody.compound_custom = compound_custom;
     if (responseFormat) requestBody.response_format = responseFormat;
 
-    const response = await axios.post<Readable>(
-      `${this.baseUrl}/chat/completions`,
-      requestBody,
-      {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: this.defaultTimeout,
-        responseType: 'stream',
-        validateStatus: () => true,
-      }
-    );
+    const response = await axios.post<Readable>(`${this.baseUrl}/chat/completions`, requestBody, {
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: this.defaultTimeout,
+      responseType: 'stream',
+      validateStatus: () => true,
+    });
 
     if (response.status !== 200) {
       const errData = await this.readStreamToBuffer(response.data).then((b) => b.toString());
@@ -267,10 +265,14 @@ export class GroqCompoundClient implements IChatLLMClient {
         await sleep(waitMs);
       }
     }
-    throw lastError instanceof Error ? lastError : new Error('Groq completeChat failed after retries');
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Groq completeChat failed after retries');
   }
 
-  private async completeChatSingleAttempt(options: ChatCompletionOptions): Promise<ChatCompletionResult> {
+  private async completeChatSingleAttempt(
+    options: ChatCompletionOptions
+  ): Promise<ChatCompletionResult> {
     const {
       messages,
       allowedTools = [],
@@ -355,6 +357,7 @@ export class GroqCompoundClient implements IChatLLMClient {
         finishReason,
         contentLength: content.length,
         usage,
+        content,
       });
 
       return {
@@ -368,16 +371,15 @@ export class GroqCompoundClient implements IChatLLMClient {
       if (axiosError.response) {
         const status = axiosError.response.status;
         const errorData = axiosError.response.data as any;
-        const message =
-          errorData?.error?.message || axiosError.message;
+        const message = errorData?.error?.message || axiosError.message;
         logger.error('Groq API error', {
           status,
           error: message,
           type: errorData?.error?.type,
         });
-        const err = new Error(
-          `Groq API error (${status}): ${message}`
-        ) as Error & { statusCode?: number };
+        const err = new Error(`Groq API error (${status}): ${message}`) as Error & {
+          statusCode?: number;
+        };
         err.statusCode = status;
         throw err;
       } else if (axiosError.request) {

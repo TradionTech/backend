@@ -1,6 +1,13 @@
 import { resolveMarketSymbol } from '../symbolResolver';
 
 describe('symbolResolver', () => {
+  it('does not map XAUUSD (gold) to XAFUSD via ISO fuzzy match', () => {
+    const result = resolveMarketSymbol({ symbol: 'XAUUSD', assetClass: 'FX' });
+    expect(result.symbol).toBe('XAUUSD');
+    expect(result.assetClass).toBe('FX');
+    expect(result.issues?.some((i) => i.includes('XAF'))).toBeFalsy();
+  });
+
   it('autocorrects FX leg typo GPBUSD -> GBPUSD', () => {
     const result = resolveMarketSymbol({ symbol: 'GPBUSD', assetClass: 'FX' });
     expect(result.symbol).toBe('GBPUSD');

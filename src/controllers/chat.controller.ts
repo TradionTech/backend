@@ -228,6 +228,41 @@ export const chatController = {
       return res.end();
     } catch (error) {
       const err = error as Error & { message?: string; statusCode?: number };
+
+      // SSE already sent text/event-stream headers — must not call res.json (ERR_HTTP_HEADERS_SENT).
+      if (res.headersSent) {
+        let code: string = 'PROVIDER_ERROR';
+        let message = 'Failed to process chat message';
+        if (err.message === 'CHAT_REQUEST_TIMEOUT') {
+          code = 'TIMEOUT';
+          message = 'The request took too long. Please try again or shorten your message.';
+        } else if (
+          err.statusCode === 413 ||
+          (err.message && (err.message.includes('413') || err.message.includes('Entity Too Large')))
+        ) {
+          code = 'CONTEXT_TOO_LONG';
+          message =
+            'This conversation or message is too long. Please start a new chat or shorten your message.';
+        } else if (err instanceof InvalidModelForPlanError) {
+          code = 'INVALID_MODEL';
+          message = err.message;
+        }
+        logger.error('Chat controller error (SSE)', {
+          error: err.message,
+          stack: err.stack,
+          sseErrorCode: code,
+        });
+        sendSSE(res, {
+          type: 'error',
+          error: {
+            code,
+            message,
+            ...(process.env.NODE_ENV === 'development' && { details: err.message }),
+          },
+        });
+        return res.end();
+      }
+
       if (err instanceof InvalidModelForPlanError) {
         return res.status(400).json({
           error: { code: 'INVALID_MODEL', message: err.message },

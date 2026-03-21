@@ -13,6 +13,8 @@ import { MarketDataProvider } from './marketDataProvider';
 import { DummyMarketDataProvider } from './providers/dummyMarketDataProvider';
 import { RealMarketDataProvider } from './providers/realMarketDataProvider';
 import { AlphaVantageProvider } from './providers/alphaVantageProvider';
+import { TwelveDataProvider } from './providers/twelveDataProvider';
+import { isPreciousMetalFxPair } from './preciousMetalFx';
 import { marketContextIntentExtractor } from './marketContextIntentExtractor';
 import { inferAssetClass, isBareCurrencyCode, toCanonicalFxSymbol } from './assetClassInferrer';
 import { mapTimeframeHint, getDefaultTimeframe } from './timeframeMapper';
@@ -32,6 +34,8 @@ import { logger } from '../../config/logger';
  */
 export class MarketContextService {
   private provider: MarketDataProvider;
+  /** Used for ISO precious-metal FX pairs (XAUUSD, …) when Alpha Vantage lacks reliable OHLC. */
+  private twelveDataProvider: TwelveDataProvider | null = null;
 
   constructor() {
     // Initialize provider based on env config
@@ -49,12 +53,19 @@ export class MarketContextService {
           env.ALPHAVANTAGE_BASE_URL
         );
       }
+      if (env.TWELVE_DATA_API_KEY) {
+        this.twelveDataProvider = new TwelveDataProvider(
+          env.TWELVE_DATA_API_KEY,
+          env.TWELVE_DATA_BASE_URL
+        );
+      }
     } else {
       this.provider = new DummyMarketDataProvider();
     }
 
     logger.info('MarketContextService initialized', {
       provider: providerType,
+      twelveDataForPreciousMetals: !!this.twelveDataProvider,
     });
   }
 
@@ -122,7 +133,15 @@ export class MarketContextService {
       // Step 3: Fetch raw market data from provider
       let rawData: RawMarketData;
       try {
-        rawData = await this.provider.getSnapshot(enrichedRequest);
+        const useTwelveData =
+          this.twelveDataProvider != null &&
+          enrichedRequest.assetClass === 'FX' &&
+          !!enrichedRequest.symbol &&
+          isPreciousMetalFxPair(enrichedRequest.symbol);
+
+        rawData = useTwelveData
+          ? await this.twelveDataProvider!.getSnapshot(enrichedRequest)
+          : await this.provider.getSnapshot(enrichedRequest);
       } catch (error) {
         logger.error('Market data provider error', {
           error: (error as Error).message,

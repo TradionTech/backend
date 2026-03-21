@@ -2,6 +2,14 @@ import { MarketContextService } from '../marketContextService';
 import { DummyMarketDataProvider } from '../providers/dummyMarketDataProvider';
 import type { RawMarketData, MarketContextRequest } from '../../../types/market';
 
+jest.mock('../marketContextIntentExtractor', () => ({
+  marketContextIntentExtractor: {
+    extractContextRequest: jest.fn().mockImplementation(async (message: string) => ({
+      rawQuery: message,
+    })),
+  },
+}));
+
 describe('MarketContextService', () => {
   let service: MarketContextService;
   let mockProvider: jest.Mocked<DummyMarketDataProvider>;
@@ -104,6 +112,34 @@ describe('MarketContextService', () => {
       expect(mockProvider.getSnapshot).toHaveBeenCalledWith(
         expect.objectContaining({ symbol: 'GBPUSD', assetClass: 'FX' })
       );
+    });
+
+    it('uses Twelve Data for precious metal FX when twelveDataProvider is set', async () => {
+      const mockTwelve = { getSnapshot: jest.fn() };
+      mockTwelve.getSnapshot.mockResolvedValue({
+        symbol: 'XAUUSD',
+        assetClass: 'FX',
+        candles: [
+          { timestamp: Date.now() - 3600000, open: 1, high: 2, low: 0.5, close: 1.5 },
+          { timestamp: Date.now(), open: 1.5, high: 2, low: 1.4, close: 1.8 },
+        ],
+        lastPrice: 1.8,
+        timestamp: Date.now(),
+        provider: 'twelve_data',
+        base: 'XAU',
+        quote: 'USD',
+      });
+      (service as any).twelveDataProvider = mockTwelve;
+
+      const result = await service.getContext({ symbol: 'XAUUSD', assetClass: 'FX' });
+
+      expect(mockTwelve.getSnapshot).toHaveBeenCalledWith(
+        expect.objectContaining({ symbol: 'XAUUSD', assetClass: 'FX' })
+      );
+      expect(mockProvider.getSnapshot).not.toHaveBeenCalled();
+      expect(result.contextAvailable).toBe(true);
+      expect(result.context?.instrument.symbol).toBe('XAUUSD');
+      expect(result.context?.dataQuality.source).toBe('twelve_data');
     });
   });
 

@@ -7,12 +7,75 @@ import type { AssetClass } from '../../types/market';
  */
 export const BARE_ISO_CURRENCY_CODES = new Set(
   [
-    'USD', 'EUR', 'JPY', 'GBP', 'CHF', 'AUD', 'CAD', 'NZD', 'SEK', 'NOK', 'DKK',
-    'SGD', 'HKD', 'CNY', 'CNH', 'KRW', 'INR', 'MXN', 'BRL', 'ZAR', 'TRY', 'PLN',
-    'HUF', 'CZK', 'THB', 'IDR', 'MYR', 'PHP', 'TWD', 'AED', 'SAR', 'QAR', 'KWD',
-    'BHD', 'OMR', 'ILS', 'RUB', 'RON', 'BGN', 'HRK', 'RSD', 'ISK', 'GEL', 'UAH',
-    'ARS', 'CLP', 'COP', 'PEN', 'EGP', 'NGN', 'MAD', 'KES', 'PKR', 'BDT', 'LKR',
-    'VND', 'JMD', 'DOP', 'TTD', 'XOF', 'XAF', 'XPF', 'GHS', 'ETB',
+    'USD',
+    'EUR',
+    'JPY',
+    'GBP',
+    'CHF',
+    'AUD',
+    'CAD',
+    'NZD',
+    'SEK',
+    'NOK',
+    'DKK',
+    'SGD',
+    'HKD',
+    'CNY',
+    'CNH',
+    'KRW',
+    'INR',
+    'MXN',
+    'BRL',
+    'ZAR',
+    'TRY',
+    'PLN',
+    'HUF',
+    'CZK',
+    'THB',
+    'IDR',
+    'MYR',
+    'PHP',
+    'TWD',
+    'AED',
+    'SAR',
+    'QAR',
+    'KWD',
+    'BHD',
+    'OMR',
+    'ILS',
+    'RUB',
+    'RON',
+    'BGN',
+    'HRK',
+    'RSD',
+    'ISK',
+    'GEL',
+    'UAH',
+    'ARS',
+    'CLP',
+    'COP',
+    'PEN',
+    'EGP',
+    'NGN',
+    'MAD',
+    'KES',
+    'PKR',
+    'BDT',
+    'LKR',
+    'VND',
+    'JMD',
+    'DOP',
+    'TTD',
+    'XOF',
+    'XAF',
+    'XPF',
+    'GHS',
+    'ETB',
+    // ISO 4217 precious metals (pairs like XAUUSD must not be fuzzy-matched to XAFUSD, etc.)
+    'XAU',
+    'XAG',
+    'XPT',
+    'XPD',
   ].map((c) => c.toUpperCase())
 );
 
@@ -109,8 +172,30 @@ export function inferAssetClass(symbol: string, metadata?: { assetClass?: string
 function isForexPair(symbol: string): boolean {
   // Common currency codes
   const currencyCodes = [
-    'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD', 'CNY', 'HKD',
-    'SGD', 'SEK', 'NOK', 'DKK', 'PLN', 'ZAR', 'MXN', 'BRL', 'INR', 'KRW',
+    'USD',
+    'EUR',
+    'GBP',
+    'JPY',
+    'AUD',
+    'CAD',
+    'CHF',
+    'NZD',
+    'CNY',
+    'HKD',
+    'SGD',
+    'SEK',
+    'NOK',
+    'DKK',
+    'PLN',
+    'ZAR',
+    'MXN',
+    'BRL',
+    'INR',
+    'KRW',
+    'XAU',
+    'XAG',
+    'XPT',
+    'XPD',
   ];
 
   // FX pairs are typically 6 characters (e.g., EURUSD, GBPUSD)
@@ -120,12 +205,12 @@ function isForexPair(symbol: string): boolean {
     for (const base of currencyCodes) {
       for (const quote of currencyCodes) {
         if (base === quote) continue;
-        
+
         // Direct concatenation (EURUSD)
         if (symbol === base + quote || symbol === quote + base) {
           return true;
         }
-        
+
         // With separator (EUR/USD, EUR-USD, EUR_USD)
         const separators = ['/', '-', '_'];
         for (const sep of separators) {
@@ -146,13 +231,45 @@ function isForexPair(symbol: string): boolean {
 function isCryptoTicker(symbol: string): boolean {
   // Common crypto tickers (major cryptocurrencies)
   const cryptoTickers = [
-    'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'DOT', 'MATIC', 'AVAX',
-    'LINK', 'UNI', 'LTC', 'ATOM', 'ETC', 'XLM', 'ALGO', 'VET', 'ICP', 'FIL',
-    'TRX', 'EOS', 'AAVE', 'MKR', 'COMP', 'SUSHI', 'YFI', 'SNX', 'CRV', '1INCH',
+    'BTC',
+    'ETH',
+    'BNB',
+    'SOL',
+    'XRP',
+    'ADA',
+    'DOGE',
+    'DOT',
+    'MATIC',
+    'AVAX',
+    'LINK',
+    'UNI',
+    'LTC',
+    'ATOM',
+    'ETC',
+    'XLM',
+    'ALGO',
+    'VET',
+    'ICP',
+    'FIL',
+    'TRX',
+    'EOS',
+    'AAVE',
+    'MKR',
+    'COMP',
+    'SUSHI',
+    'YFI',
+    'SNX',
+    'CRV',
+    '1INCH',
     // Stablecoins
-    'USDT', 'USDC', 'DAI', 'BUSD', 'TUSD',
+    'USDT',
+    'USDC',
+    'DAI',
+    'BUSD',
+    'TUSD',
     // Wrapped tokens
-    'WBTC', 'WETH',
+    'WBTC',
+    'WETH',
   ];
 
   // Direct match
@@ -177,9 +294,24 @@ function isCryptoTicker(symbol: string): boolean {
 function isIndexSymbol(symbol: string): boolean {
   // Common index symbols
   const indexSymbols = [
-    'SPX', 'SPY', 'DJI', 'DJIA', 'NDX', 'QQQ', 'RUT', 'VIX',
-    'FTSE', 'DAX', 'CAC', 'NIKKEI', 'HSI', 'ASX',
-    'SP500', 'DOW', 'NASDAQ', 'RUSSELL',
+    'SPX',
+    'SPY',
+    'DJI',
+    'DJIA',
+    'NDX',
+    'QQQ',
+    'RUT',
+    'VIX',
+    'FTSE',
+    'DAX',
+    'CAC',
+    'NIKKEI',
+    'HSI',
+    'ASX',
+    'SP500',
+    'DOW',
+    'NASDAQ',
+    'RUSSELL',
   ];
 
   if (indexSymbols.includes(symbol)) {
@@ -220,9 +352,9 @@ function isEquityLike(symbol: string): boolean {
   // - 1-5 uppercase letters (e.g., AAPL, MSFT, TSLA)
   // - May contain numbers (e.g., BRK.B, 3M)
   // - Usually no special characters (except dots for classes)
-  
+
   // Simple pattern: mostly letters, possibly with numbers and dots
   const equityPattern = /^[A-Z]{1,5}(\.[A-Z])?(\d+)?$/;
-  
+
   return equityPattern.test(symbol) && symbol.length <= 8;
 }

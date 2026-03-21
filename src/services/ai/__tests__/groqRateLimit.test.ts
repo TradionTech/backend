@@ -19,4 +19,11 @@ describe('groqRateLimit', () => {
     expect(compute429WaitMs('Something went wrong', 0)).toBe(1000);
     expect(compute429WaitMs('Something went wrong', 1)).toBe(2000);
   });
+
+  it('compute429WaitMs uses a longer floor for TPM (tokens per minute) limits', () => {
+    const msg =
+      'Rate limit ... tokens per minute (TPM): Limit 30000 ... Please try again in 4.17s.';
+    expect(compute429WaitMs(msg, 0)).toBeGreaterThan(14_000);
+    expect(compute429WaitMs(msg, 1)).toBeGreaterThan(25_000);
+  });
 });

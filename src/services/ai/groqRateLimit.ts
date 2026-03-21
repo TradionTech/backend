@@ -20,6 +20,16 @@ export function sleep(ms: number): Promise<void> {
 /** Prefer API "try again in Xs"; else exponential backoff (capped). */
 export function compute429WaitMs(errorMessage: string, attemptIndexZero: number): number {
   const parsed = parseGroq429RetryAfterMs(errorMessage);
+  const isTpm = /\bTPM\b|tokens per minute/i.test(errorMessage);
+
+  // Groq's short "try again in ~4s" often fails again: TPM is a rolling/minute budget, not a 4s cooldown.
+  if (isTpm) {
+    const minWait = 15_000 + attemptIndexZero * 12_500;
+    const tpmFloor = Math.min(75_000, minWait);
+    if (parsed != null) return Math.max(parsed, tpmFloor);
+    return Math.max(tpmFloor, Math.min(1000 * Math.pow(2, attemptIndexZero), 15_000));
+  }
+
   if (parsed != null) return Math.min(parsed, 120_000);
   const backoff = Math.min(1000 * Math.pow(2, attemptIndexZero), 15_000);
   return backoff;

@@ -60,6 +60,10 @@ export const env = {
     Math.max(1, parseInt(process.env.ALPHAVANTAGE_NEWS_LIMIT ?? '100', 10))
   ),
 
+  // Twelve Data (OHLC time series for FX precious metals; complements Alpha Vantage spot-oriented FX)
+  TWELVE_DATA_API_KEY: process.env.TWELVE_DATA_API_KEY ?? '',
+  TWELVE_DATA_BASE_URL: process.env.TWELVE_DATA_BASE_URL ?? 'https://api.twelvedata.com',
+
   // Crypto Fear & Greed Index API
   CRYPTO_FG_API_BASE_URL: process.env.CRYPTO_FG_API_BASE_URL ?? 'https://api.alternative.me/fng/',
   CRYPTO_FG_API_KEY: process.env.CRYPTO_FG_API_KEY ?? '',
